@@ -149,10 +149,14 @@ class SVV_API_Integration {
         $now = time();
         $exp = $now + 120; // Max 120 seconds allowed by Maskinporten
 
-        // Set the correct audience based on environment
+        // Set the correct audience and resource based on environment
         $aud = defined('SVV_API_ENVIRONMENT') && SVV_API_ENVIRONMENT === 'test' 
             ? 'https://test.maskinporten.no/' 
             : 'https://maskinporten.no/';
+
+        $resource = defined('SVV_API_ENVIRONMENT') && SVV_API_ENVIRONMENT === 'test' 
+            ? 'https://www.utv.vegvesen.no' 
+            : 'https://www.vegvesen.no';
 
         $payload = [
             'aud' => $aud,
@@ -160,7 +164,10 @@ class SVV_API_Integration {
             'iss' => $this->client_id,
             'exp' => $exp,
             'iat' => $now,
-            'jti' => $this->generate_uuid()
+            'jti' => $this->generate_uuid(),
+            
+            // Add resource for Statens Vegvesen API
+            'resource' => [$resource]
         ];
 
         // Base64-url encode header and payload
@@ -580,7 +587,7 @@ class SVV_API_Integration {
         }
         
         if (isset($raw_data['registrering']['registreringsstatus'])) {
-            $data['protected']['status'] = $raw_data['registrering']['registreringsstatus'];
+            $data['protected']['status'] = $raw_data['registreringsstatus'];
         }
         
         // Include raw data for debugging if needed
