@@ -427,7 +427,7 @@ class SVV_API_Integration {
             
             // Try with GET endpoint if available
             error_log("🔄 Trying direct endpoint with new token");
-            $direct_endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/kjennemerke/' . urlencode($registration_number);
+            $direct_endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke/' . urlencode($registration_number);
             error_log("🔄 Direct endpoint URL: " . $direct_endpoint);
             
             $response = wp_remote_get($direct_endpoint, [
