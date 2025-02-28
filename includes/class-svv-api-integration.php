@@ -53,7 +53,7 @@ class SVV_API_Integration {
      */
     public function get_access_token() {
         // Check if we have a cached token
-        $cached_token = get_transient($this->token_cache_key);
+        $cached_token = SVV_API_Cache::get($this->token_cache_key);
         if ($cached_token !== false) {
             error_log("🔑 Using cached Maskinporten token");
             return $cached_token;
@@ -83,7 +83,7 @@ class SVV_API_Integration {
 
         if (is_wp_error($response)) {
             error_log("❌ Maskinporten connection error: " . $response->get_error_message());
-            return new WP_Error('token_request_failed', 'Could not connect to Maskinporten');
+            return new WP_Error('token_request_failed', 'Could not connect to Maskinporten: ' . $response->get_error_message());
         }
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
@@ -93,14 +93,17 @@ class SVV_API_Integration {
 
         if ($status_code !== 200 || !isset($body['access_token'])) {
             $error_message = isset($body['error_description']) ? $body['error_description'] : 'Unknown error';
+            $error_code = isset($body['error']) ? $body['error'] : 'token_error';
+            
             error_log("❌ Maskinporten error: HTTP Status $status_code - $error_message");
             error_log("Response body: " . wp_remote_retrieve_body($response));
-            return new WP_Error('token_error', "Maskinporten error: $error_message");
+            
+            return new WP_Error($error_code, "Maskinporten error: $error_message");
         }
 
         // Cache token
         $token = $body['access_token'];
-        set_transient($this->token_cache_key, $token, $this->token_cache_expiry);
+        SVV_API_Cache::set($this->token_cache_key, $token);
         
         error_log("✅ Successfully obtained new Maskinporten token");
 
@@ -125,30 +128,34 @@ class SVV_API_Integration {
             return new WP_Error('cert_read_error', 'Could not read private key from PEM file');
         }
 
-        $key_resource = openssl_pkey_get_private($private_key, $this->certificate_password);
-        if (!$key_resource) {
-            error_log("❌ Could not load private key - Check password");
-            return new WP_Error('cert_load_failed', 'Could not load private key. Check the password.');
+        // Get the certificate data to include in x5c header
+        $cert_data = $this->extract_cert_data($private_key);
+        if (is_wp_error($cert_data)) {
+            return $cert_data;
         }
 
-        // Create JWT header with kid
+        // Create JWT header with kid AND x5c - Maskinporten requires one of these
         $header = [
             'alg' => 'RS256',
-            'typ' => 'JWT',
-            'kid' => $this->kid  // Added key identifier
+            'kid' => $this->kid,
         ];
+        
+        // Add x5c if we have certificate data
+        if (!empty($cert_data)) {
+            $header['x5c'] = [$cert_data];
+        }
 
-        // Create JWT payload with fixed audience
+        // Create JWT payload
         $now = time();
-        $exp = $now + 120; // Max 120 seconds
+        $exp = $now + 120; // Max 120 seconds allowed by Maskinporten
 
-        // Fix for MP-110: Use explicit audience based on environment
+        // Set the correct audience based on environment
         $aud = defined('SVV_API_ENVIRONMENT') && SVV_API_ENVIRONMENT === 'test' 
             ? 'https://test.maskinporten.no/' 
             : 'https://maskinporten.no/';
 
         $payload = [
-            'aud' => $aud,  // Fixed audience claim
+            'aud' => $aud,
             'scope' => $this->scope,
             'iss' => $this->client_id,
             'exp' => $exp,
@@ -164,6 +171,13 @@ class SVV_API_Integration {
 
         // Sign JWT with private key
         $signature = '';
+        $key_resource = openssl_pkey_get_private($private_key, $this->certificate_password);
+        
+        if (!$key_resource) {
+            error_log("❌ Could not load private key - Check password");
+            return new WP_Error('cert_load_failed', 'Could not load private key. Check the password.');
+        }
+        
         $is_signed = openssl_sign($signing_input, $signature, $key_resource, OPENSSL_ALGO_SHA256);
 
         if (!$is_signed) {
@@ -175,17 +189,37 @@ class SVV_API_Integration {
         $encoded_signature = $this->base64url_encode($signature);
         $jwt = $encoded_header . '.' . $encoded_payload . '.' . $encoded_signature;
 
-        // Log JWT for debugging
+        // Log JWT parts for debugging
         error_log("🛠 Debug JWT Header: " . json_encode($header));
         error_log("🛠 Debug JWT Payload: " . json_encode($payload));
-        error_log("🛠 Debug JWT Signature length: " . strlen($signature));
-        error_log("🛠 Debug Full JWT length: " . strlen($jwt));
 
         return $jwt;
     }
 
     /**
-     * Base64-url encoding function (fixes JWT encoding issue)
+     * Extract certificate data from PEM file for use in x5c header
+     * 
+     * @param string $private_key PEM formatted private key
+     * @return string|WP_Error Base64 encoded certificate data or error
+     */
+    private function extract_cert_data($private_key) {
+        // Try to extract certificate from the PEM file
+        if (preg_match('/-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----/s', $private_key, $matches)) {
+            // Clean up the certificate data (remove new lines and whitespace)
+            return str_replace(["\r", "\n", " "], '', $matches[1]);
+        }
+        
+        // If we can't find a certificate in the PEM file, we'll use kid instead
+        // This is not an error since we can authenticate with kid only if necessary
+        error_log("ℹ️ No certificate found in PEM file, will use kid for authentication");
+        return '';
+    }
+
+    /**
+     * Base64-url encoding function
+     * 
+     * @param string $data Data to encode
+     * @return string Base64-url encoded string
      */
     private function base64url_encode($data) {
         return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
@@ -204,6 +238,80 @@ class SVV_API_Integration {
             mt_rand(0, 0x3fff) | 0x8000,
             mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
         );
+    }
+    
+    /**
+     * Test Maskinporten token generation without making API calls
+     * 
+     * @return array Test results with status and messages
+     */
+    public function test_token_generation() {
+        $results = [
+            'success' => false,
+            'messages' => [],
+        ];
+        
+        // Step 1: Check certificate
+        if (!file_exists($this->certificate_path)) {
+            $results['messages'][] = [
+                'type' => 'error',
+                'message' => 'Certificate file not found at: ' . $this->certificate_path
+            ];
+            return $results;
+        }
+        
+        $results['messages'][] = [
+            'type' => 'success',
+            'message' => 'Certificate file found'
+        ];
+        
+        // Step 2: Try to load private key
+        $private_key = file_get_contents($this->certificate_path);
+        if (!$private_key) {
+            $results['messages'][] = [
+                'type' => 'error',
+                'message' => 'Could not read private key from certificate file'
+            ];
+            return $results;
+        }
+        
+        $results['messages'][] = [
+            'type' => 'success',
+            'message' => 'Private key loaded from certificate file'
+        ];
+        
+        // Step 3: Try to create JWT
+        $jwt = $this->create_jwt_grant();
+        if (is_wp_error($jwt)) {
+            $results['messages'][] = [
+                'type' => 'error',
+                'message' => 'JWT creation failed: ' . $jwt->get_error_message()
+            ];
+            return $results;
+        }
+        
+        $results['messages'][] = [
+            'type' => 'success',
+            'message' => 'JWT grant created successfully'
+        ];
+        
+        // Step 4: Try to get token
+        $token = $this->get_access_token();
+        if (is_wp_error($token)) {
+            $results['messages'][] = [
+                'type' => 'error',
+                'message' => 'Token request failed: ' . $token->get_error_message()
+            ];
+            return $results;
+        }
+        
+        $results['success'] = true;
+        $results['messages'][] = [
+            'type' => 'success',
+            'message' => 'Successfully obtained access token from Maskinporten'
+        ];
+        
+        return $results;
     }
     
     /**

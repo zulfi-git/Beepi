@@ -4,34 +4,72 @@
  */
 class Beepi_Admin {
 
-// Constructor - add this to the class
-public function __construct() {
-    // Register AJAX handler for token testing
-    add_action('wp_ajax_beepi_test_token', array($this, 'ajax_test_token'));
-}
+    /**
+     * Constructor - add this to the class
+     */
+    public function __construct() {
+        // Register AJAX handler for token testing
+        add_action('wp_ajax_beepi_test_token', array($this, 'ajax_test_token'));
+        
+        // Register admin scripts and styles
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
+    }
 
-// AJAX handler for testing token authentication
-public function ajax_test_token() {
-    // Verify nonce
-    check_ajax_referer('beepi_admin_nonce', 'nonce');
-    
-    // Test authentication
-    $api = new SVV_API_Integration();
-    $token = $api->get_access_token();
-    
-    if (is_wp_error($token)) {
-        // Authentication failed
-        wp_send_json_error(array(
-            'message' => $token->get_error_message()
-        ));
-    } else {
-        // Authentication successful
-        wp_send_json_success(array(
-            'token' => substr($token, 0, 10) . '...' // Show just beginning of token for security
+    /**
+     * Enqueue admin scripts and styles
+     */
+    public function enqueue_admin_scripts($hook) {
+        // Only load on our plugin's admin page
+        if ($hook != 'toplevel_page_beepi') {
+            return;
+        }
+        
+        // Enqueue styles
+        wp_enqueue_style(
+            'beepi-admin',
+            BEEPI_PLUGIN_URL . 'admin/css/beepi-admin.css',
+            array(),
+            BEEPI_VERSION
+        );
+        
+        // Enqueue scripts
+        wp_enqueue_script(
+            'beepi-admin',
+            BEEPI_PLUGIN_URL . 'admin/js/beepi-admin.js',
+            array('jquery'),
+            BEEPI_VERSION,
+            true
+        );
+        
+        // Localize script
+        wp_localize_script('beepi-admin', 'beepiAdmin', array(
+            'nonce' => wp_create_nonce('beepi_admin_nonce'),
         ));
     }
-}
 
+    /**
+     * AJAX handler for testing token authentication
+     */
+    public function ajax_test_token() {
+        // Verify nonce
+        check_ajax_referer('beepi_admin_nonce', 'nonce');
+        
+        // Test authentication
+        $api = new SVV_API_Integration();
+        $results = $api->test_token_generation();
+        
+        if (!$results['success']) {
+            // Authentication failed
+            wp_send_json_error(array(
+                'messages' => $results['messages']
+            ));
+        } else {
+            // Authentication successful
+            wp_send_json_success(array(
+                'messages' => $results['messages']
+            ));
+        }
+    }
 
     /**
      * Add plugin admin menu
@@ -148,36 +186,6 @@ public function ajax_test_token() {
             <p><?php _e('Click the button below to test your Maskinporten authentication.', 'beepi'); ?></p>
             <button class="button" id="beepi-test-token"><?php _e('Test Authentication', 'beepi'); ?></button>
             <div id="beepi-test-result" style="margin-top: 10px; padding: 10px; background: #f8f8f8; border: 1px solid #ddd; display: none;"></div>
-            
-            <script>
-                jQuery(document).ready(function($) {
-                    $('#beepi-test-token').on('click', function(e) {
-                        e.preventDefault();
-                        
-                        const resultBox = $('#beepi-test-result');
-                        resultBox.html('<?php _e('Testing authentication...', 'beepi'); ?>').show();
-                        
-                        $.ajax({
-                            url: ajaxurl,
-                            type: 'POST',
-                            data: {
-                                action: 'beepi_test_token',
-                                nonce: '<?php echo wp_create_nonce('beepi_admin_nonce'); ?>'
-                            },
-                            success: function(response) {
-                                if (response.success) {
-                                    resultBox.html('<div style="color: green;"><?php _e('Success! Authentication is working correctly.', 'beepi'); ?></div>');
-                                } else {
-                                    resultBox.html('<div style="color: red;"><?php _e('Error: ', 'beepi'); ?>' + response.data.message + '</div>');
-                                }
-                            },
-                            error: function() {
-                                resultBox.html('<div style="color: red;"><?php _e('Connection error. Please try again.', 'beepi'); ?></div>');
-                            }
-                        });
-                    });
-                });
-            </script>
         </div>
         <?php
     }

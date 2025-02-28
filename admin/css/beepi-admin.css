@@ -1,0 +1,51 @@
+.test-results {
+    margin-top: 15px;
+    background: #fff;
+    border: 1px solid #ddd;
+    padding: 15px;
+    border-radius: 4px;
+}
+
+.test-message {
+    margin-bottom: 10px;
+    display: flex;
+    align-items: flex-start;
+}
+
+.test-message .dashicons {
+    margin-right: 8px;
+    margin-top: 2px;
+}
+
+.test-message.success .dashicons {
+    color: #46b450;
+}
+
+.test-message.error .dashicons {
+    color: #dc3232;
+}
+
+.status-message {
+    margin-top: 15px;
+    padding: 10px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+
+.status-message.success {
+    background-color: #ecf7ed;
+    color: #2a8a36;
+    border: 1px solid #c5e1c8;
+}
+
+.status-message.error {
+    background-color: #fbeaea;
+    color: #b32d2e;
+    border: 1px solid #eac9c9;
+}
+
+.loading {
+    padding: 15px;
+    text-align: center;
+    color: #666;
+}
