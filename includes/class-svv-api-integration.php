@@ -357,16 +357,35 @@ class SVV_API_Integration {
         error_log("🔄 Calling SVV API endpoint: $endpoint");
         error_log("🔄 Request body (format 1): " . json_encode($request_body_1));
         
-        $response = wp_remote_post($endpoint, [
-            'headers' => [
-                'Content-Type' => 'application/json',
-                'Accept' => 'application/json',
-                'Authorization' => 'Bearer ' . $token
-            ],
-            'body' => json_encode($request_body_1),
-            'timeout' => 15,
-            'sslverify' => true,
-        ]);
+        // Retry logic
+        $max_retries = 3;
+        $retry_count = 0;
+        $response = null;
+
+        while ($retry_count < $max_retries) {
+            $response = wp_remote_post($endpoint, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                    'Authorization' => 'Bearer ' . $token
+                ],
+                'body' => json_encode($request_body_1),
+                'timeout' => 15,
+                'sslverify' => true,
+            ]);
+
+            if (!is_wp_error($response)) {
+                break;
+            }
+
+            $retry_count++;
+            error_log("🔄 Retry $retry_count/$max_retries for SVV API request");
+        }
+
+        if (is_wp_error($response)) {
+            error_log("❌ SVV API error after $max_retries retries: " . $response->get_error_message());
+            return $response;
+        }
         
         // If we get 401, try alternate request format
         if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 401) {
