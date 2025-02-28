@@ -347,23 +347,79 @@ class SVV_API_Integration {
             return $token;
         }
         
-        // Call SVV API
+        // Log the token being used (first 20 chars only for security)
+        error_log("🔑 Token being used (first 20 chars): " . substr($token, 0, 20));
+        
+        // Call SVV API - try with array of objects format first
         $endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke';
-        $request_body = [['kjennemerke' => $registration_number]];
+        $request_body_1 = [['kjennemerke' => $registration_number]];
         
         error_log("🔄 Calling SVV API endpoint: $endpoint");
-        error_log("🔄 Request body: " . json_encode($request_body));
+        error_log("🔄 Request body (format 1): " . json_encode($request_body_1));
         
-        // Make sure the Authorization header format is correct
         $response = wp_remote_post($endpoint, [
             'headers' => [
                 'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
                 'Authorization' => 'Bearer ' . $token
             ],
-            'body' => json_encode($request_body),
+            'body' => json_encode($request_body_1),
             'timeout' => 15,
-            'sslverify' => true, // Make sure SSL verification is enabled
+            'sslverify' => true,
         ]);
+        
+        // If we get 401, try alternate request format
+        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 401) {
+            $response_body = wp_remote_retrieve_body($response);
+            error_log("🔄 First request format failed with 401 - Response: " . $response_body);
+            
+            // Try with simple object format
+            $request_body_2 = ['kjennemerke' => $registration_number];
+            error_log("🔄 Trying alternate request format");
+            error_log("🔄 Request body (format 2): " . json_encode($request_body_2));
+            
+            $response = wp_remote_post($endpoint, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                    'Authorization' => 'Bearer ' . $token
+                ],
+                'body' => json_encode($request_body_2),
+                'timeout' => 15,
+                'sslverify' => true,
+            ]);
+        }
+        
+        // If still getting 401, try a direct endpoint
+        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 401) {
+            $response_body = wp_remote_retrieve_body($response);
+            error_log("🔄 Second request format failed with 401 - Response: " . $response_body);
+            
+            // Clear token cache and get a new token
+            SVV_API_Cache::delete($this->token_cache_key);
+            error_log("🔄 Clearing token cache and getting new token");
+            
+            $token = $this->get_access_token();
+            if (is_wp_error($token)) {
+                return $token;
+            }
+            
+            error_log("🔑 New token obtained (first 20 chars): " . substr($token, 0, 20));
+            
+            // Try with GET endpoint if available
+            error_log("🔄 Trying direct endpoint with new token");
+            $direct_endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/kjennemerke/' . urlencode($registration_number);
+            error_log("🔄 Direct endpoint URL: " . $direct_endpoint);
+            
+            $response = wp_remote_get($direct_endpoint, [
+                'headers' => [
+                    'Accept' => 'application/json',
+                    'Authorization' => 'Bearer ' . $token
+                ],
+                'timeout' => 15,
+                'sslverify' => true,
+            ]);
+        }
         
         if (is_wp_error($response)) {
             error_log("❌ SVV API error: " . $response->get_error_message());
@@ -373,90 +429,65 @@ class SVV_API_Integration {
         $status_code = wp_remote_retrieve_response_code($response);
         $response_body = wp_remote_retrieve_body($response);
         
-        error_log("🔄 SVV API response status: $status_code");
-        error_log("🔄 SVV API response body: " . substr($response_body, 0, 1000)); // Log first 1000 chars
+        error_log("🔄 Final API response status: $status_code");
+        error_log("🔄 Response body (first 500 chars): " . substr($response_body, 0, 500));
         
-        // Handle specific status codes
-        if ($status_code === 401) {
-            // Unauthorized - clear token cache and try again
-            SVV_API_Cache::delete($this->token_cache_key);
-            error_log("🔄 401 Unauthorized error - clearing token cache and retrying");
-            
-            // Get a new token
-            $token = $this->get_access_token();
-            if (is_wp_error($token)) {
-                return $token;
-            }
-            
-            // Try the request again with the new token
-            $response = wp_remote_post($endpoint, [
-                'headers' => [
-                    'Content-Type' => 'application/json',
-                    'Authorization' => 'Bearer ' . $token
-                ],
-                'body' => json_encode($request_body),
-                'timeout' => 15,
-                'sslverify' => true,
-            ]);
-            
-            if (is_wp_error($response)) {
-                error_log("❌ SVV API retry error: " . $response->get_error_message());
-                return $response;
-            }
-            
-            $status_code = wp_remote_retrieve_response_code($response);
-            $response_body = wp_remote_retrieve_body($response);
-            
-            error_log("🔄 SVV API retry response status: $status_code");
-            error_log("🔄 SVV API retry response body: " . substr($response_body, 0, 1000));
-            
-            if ($status_code !== 200) {
-                error_log("❌ SVV API retry failed with status: $status_code");
-                return new WP_Error('api_error', "API error on retry: HTTP $status_code");
-            }
-        } else if ($status_code !== 200) {
-            $error_message = "SVV API error: HTTP Status $status_code";
-            error_log("❌ $error_message");
-            return new WP_Error('api_error', $error_message);
+        if ($status_code !== 200) {
+            error_log("❌ API error: HTTP Status $status_code");
+            return new WP_Error('api_error', "API error: HTTP Status $status_code");
         }
         
-        // Try to decode the response body
+        // Try to decode JSON response
         $body = json_decode($response_body, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
             error_log("❌ JSON decode error: " . json_last_error_msg());
-            return new WP_Error('json_decode_error', 'Failed to decode API response: ' . json_last_error_msg());
+            return new WP_Error('json_decode_error', 'Failed to decode API response');
         }
         
-        // Handle empty response or error in response
-        if (empty($body)) {
-            error_log("❌ Empty response body");
-            return new WP_Error('empty_response', 'Empty response from API');
-        }
-        
-        // Handle API error response
+        // Handle API error responses
         if (isset($body['gjenstaendeKvote'])) {
             // This is the response format for errors
             $error_message = isset($body['feilmelding']) ? $body['feilmelding'] : 'Unknown API error';
-            error_log("❌ API error message: $error_message");
+            error_log("❌ API error response: $error_message");
             return new WP_Error('api_error', $error_message);
         }
         
-        // Check first item for errors
+        // Handle empty response
+        if (empty($body)) {
+            error_log("❌ Empty response from API");
+            return new WP_Error('empty_response', 'No data returned from API');
+        }
+        
+        // Check for array response with error
         if (is_array($body) && !empty($body[0]) && isset($body[0]['feilmelding'])) {
             $error_message = $body[0]['feilmelding'];
             error_log("❌ Vehicle not found: $error_message");
             return new WP_Error('not_found', $error_message);
         }
-
+        
         // Check for valid vehicle data
-        if (empty($body[0]['kjoretoydata'])) {
+        $kjoretoydata = null;
+        
+        // Determine the structure of the response
+        if (is_array($body) && !empty($body[0]) && isset($body[0]['kjoretoydata'])) {
+            // Format 1: Array of results with kjoretoydata
+            $kjoretoydata = $body[0]['kjoretoydata'];
+        } elseif (isset($body['kjoretoydata'])) {
+            // Format 2: Direct object with kjoretoydata
+            $kjoretoydata = $body['kjoretoydata'];
+        } elseif (is_array($body)) {
+            // Format 3: Might be direct data
+            $kjoretoydata = $body;
+        }
+        
+        if (empty($kjoretoydata)) {
             error_log("❌ No vehicle data in response");
-            return new WP_Error('no_vehicle_data', 'No vehicle data in response');
+            return new WP_Error('no_vehicle_data', 'No vehicle data found in response');
         }
         
         // Process and prepare data for display
         error_log("✅ Vehicle data received for: $registration_number");
-        $vehicle_data = $this->prepare_vehicle_data($body[0]['kjoretoydata']);
+        $vehicle_data = $this->prepare_vehicle_data($kjoretoydata);
         
         // Cache for 6 hours
         SVV_API_Cache::set($cache_key, $vehicle_data, 6 * HOUR_IN_SECONDS);
@@ -474,33 +505,64 @@ class SVV_API_Integration {
         // Log the raw data structure for debugging
         error_log("🔍 Raw data structure: " . json_encode(array_keys($raw_data)));
         
-        // Split data into teaser (free) and protected (paid) parts
+        // Initialize with default values
         $data = [
             'teaser' => [
-                'reg_number' => isset($raw_data['kjoretoyId']['kjennemerke']) ? 
-                    $raw_data['kjoretoyId']['kjennemerke'] : '',
-                'brand' => isset($raw_data['godkjenning']['tekniskGodkjenning']['fabrikat']) ? 
-                    $raw_data['godkjenning']['tekniskGodkjenning']['fabrikat'] : '',
-                'model' => isset($raw_data['godkjenning']['tekniskGodkjenning']['handelsbetegnelse']) ? 
-                    $raw_data['godkjenning']['tekniskGodkjenning']['handelsbetegnelse'] : '',
-                'first_registration' => isset($raw_data['forstegangsregistrering']['registrertForstegangNorgeDato']) ? 
-                    $raw_data['forstegangsregistrering']['registrertForstegangNorgeDato'] : '',
-                'vehicle_type' => isset($raw_data['godkjenning']['tekniskGodkjenning']['kjoretoyklasse']['kodeNavn']) ? 
-                    $raw_data['godkjenning']['tekniskGodkjenning']['kjoretoyklasse']['kodeNavn'] : '',
-                'engine' => isset($raw_data['godkjenning']['tekniskGodkjenning']['motor']) ? 
-                    $this->process_engine_data($raw_data['godkjenning']['tekniskGodkjenning']['motor']) : [],
-                'last_inspection' => isset($raw_data['periodiskKjoretoyKontroll']) ? 
-                    $this->process_inspection_data($raw_data['periodiskKjoretoyKontroll']) : [],
+                'reg_number' => '',
+                'brand' => '',
+                'model' => '',
+                'first_registration' => '',
+                'vehicle_type' => '',
+                'engine' => [],
+                'last_inspection' => [],
             ],
             'protected' => [
-                'owner' => isset($raw_data['registrering']['registrertEier']) ?
-                    $this->process_owner_data($raw_data['registrering']['registrertEier']) : [],
-                'registration_history' => isset($raw_data['registrering']['historikk']) ?
-                    $raw_data['registrering']['historikk'] : [],
-                'status' => isset($raw_data['registrering']['registreringsstatus']) ?
-                    $raw_data['registrering']['registreringsstatus'] : []
+                'owner' => [],
+                'registration_history' => [],
+                'status' => []
             ]
         ];
+        
+        // Extract data if available
+        if (isset($raw_data['kjoretoyId']['kjennemerke'])) {
+            $data['teaser']['reg_number'] = $raw_data['kjoretoyId']['kjennemerke'];
+        }
+        
+        if (isset($raw_data['godkjenning']['tekniskGodkjenning']['fabrikat'])) {
+            $data['teaser']['brand'] = $raw_data['godkjenning']['tekniskGodkjenning']['fabrikat'];
+        }
+        
+        if (isset($raw_data['godkjenning']['tekniskGodkjenning']['handelsbetegnelse'])) {
+            $data['teaser']['model'] = $raw_data['godkjenning']['tekniskGodkjenning']['handelsbetegnelse'];
+        }
+        
+        if (isset($raw_data['forstegangsregistrering']['registrertForstegangNorgeDato'])) {
+            $data['teaser']['first_registration'] = $raw_data['forstegangsregistrering']['registrertForstegangNorgeDato'];
+        }
+        
+        if (isset($raw_data['godkjenning']['tekniskGodkjenning']['kjoretoyklasse']['kodeNavn'])) {
+            $data['teaser']['vehicle_type'] = $raw_data['godkjenning']['tekniskGodkjenning']['kjoretoyklasse']['kodeNavn'];
+        }
+        
+        if (isset($raw_data['godkjenning']['tekniskGodkjenning']['motor'])) {
+            $data['teaser']['engine'] = $this->process_engine_data($raw_data['godkjenning']['tekniskGodkjenning']['motor']);
+        }
+        
+        if (isset($raw_data['periodiskKjoretoyKontroll'])) {
+            $data['teaser']['last_inspection'] = $this->process_inspection_data($raw_data['periodiskKjoretoyKontroll']);
+        }
+        
+        if (isset($raw_data['registrering']['registrertEier'])) {
+            $data['protected']['owner'] = $this->process_owner_data($raw_data['registrering']['registrertEier']);
+        }
+        
+        if (isset($raw_data['registrering']['historikk'])) {
+            $data['protected']['registration_history'] = $raw_data['registrering']['historikk'];
+        }
+        
+        if (isset($raw_data['registrering']['registreringsstatus'])) {
+            $data['protected']['status'] = $raw_data['registrering']['registreringsstatus'];
+        }
         
         // Include raw data for debugging if needed
         if (defined('WP_DEBUG') && WP_DEBUG) {
