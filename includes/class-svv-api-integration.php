@@ -36,10 +36,10 @@ class SVV_API_Integration {
         $environment = defined('SVV_API_ENVIRONMENT') ? SVV_API_ENVIRONMENT : 'prod';
         if ($environment === 'test') {
             $this->maskinporten_token_url = 'https://test.maskinporten.no/token';
-            $this->svv_api_base_url = 'https://akfell-datautlevering-sisdinky.utv.atlas.vegvesen.no';
+            $this->svv_api_base_url = 'https://www.utv.vegvesen.no';
         } else {
             $this->maskinporten_token_url = 'https://maskinporten.no/token';
-            $this->svv_api_base_url = 'https://akfell-datautlevering.atlas.vegvesen.no';
+            $this->svv_api_base_url = 'https://www.vegvesen.no';
         }
         
         error_log("🔧 SVV API Integration initialized - Environment: $environment");
