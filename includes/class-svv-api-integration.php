@@ -334,7 +334,7 @@ class SVV_API_Integration {
         
         // Check cache first
         $cache_key = 'vehicle_data_' . $registration_number;
-        $cached_data = get_transient($cache_key);
+        $cached_data = SVV_API_Cache::get($cache_key);
         if ($cached_data !== false) {
             error_log("🔄 Using cached data for: $registration_number");
             return $cached_data;
@@ -354,6 +354,7 @@ class SVV_API_Integration {
         error_log("🔄 Calling SVV API endpoint: $endpoint");
         error_log("🔄 Request body: " . json_encode($request_body));
         
+        // Make sure the Authorization header format is correct
         $response = wp_remote_post($endpoint, [
             'headers' => [
                 'Content-Type' => 'application/json',
@@ -361,6 +362,7 @@ class SVV_API_Integration {
             ],
             'body' => json_encode($request_body),
             'timeout' => 15,
+            'sslverify' => true, // Make sure SSL verification is enabled
         ]);
         
         if (is_wp_error($response)) {
@@ -372,29 +374,92 @@ class SVV_API_Integration {
         $response_body = wp_remote_retrieve_body($response);
         
         error_log("🔄 SVV API response status: $status_code");
-        error_log("🔄 SVV API response body: $response_body");
+        error_log("🔄 SVV API response body: " . substr($response_body, 0, 1000)); // Log first 1000 chars
         
-        $body = json_decode($response_body, true);
-        
-        if ($status_code !== 200) {
-            $error_message = isset($body['message']) ? $body['message'] : 'Unknown API error';
-            error_log("❌ SVV API error: HTTP Status $status_code - $error_message");
+        // Handle specific status codes
+        if ($status_code === 401) {
+            // Unauthorized - clear token cache and try again
+            SVV_API_Cache::delete($this->token_cache_key);
+            error_log("🔄 401 Unauthorized error - clearing token cache and retrying");
+            
+            // Get a new token
+            $token = $this->get_access_token();
+            if (is_wp_error($token)) {
+                return $token;
+            }
+            
+            // Try the request again with the new token
+            $response = wp_remote_post($endpoint, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Authorization' => 'Bearer ' . $token
+                ],
+                'body' => json_encode($request_body),
+                'timeout' => 15,
+                'sslverify' => true,
+            ]);
+            
+            if (is_wp_error($response)) {
+                error_log("❌ SVV API retry error: " . $response->get_error_message());
+                return $response;
+            }
+            
+            $status_code = wp_remote_retrieve_response_code($response);
+            $response_body = wp_remote_retrieve_body($response);
+            
+            error_log("🔄 SVV API retry response status: $status_code");
+            error_log("🔄 SVV API retry response body: " . substr($response_body, 0, 1000));
+            
+            if ($status_code !== 200) {
+                error_log("❌ SVV API retry failed with status: $status_code");
+                return new WP_Error('api_error', "API error on retry: HTTP $status_code");
+            }
+        } else if ($status_code !== 200) {
+            $error_message = "SVV API error: HTTP Status $status_code";
+            error_log("❌ $error_message");
             return new WP_Error('api_error', $error_message);
         }
         
-        // API might return empty array if vehicle not found
-        if (empty($body) || empty($body[0]) || isset($body[0]['feilmelding'])) {
-            $error_message = isset($body[0]['feilmelding']) ? $body[0]['feilmelding'] : 'Vehicle not found';
+        // Try to decode the response body
+        $body = json_decode($response_body, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log("❌ JSON decode error: " . json_last_error_msg());
+            return new WP_Error('json_decode_error', 'Failed to decode API response: ' . json_last_error_msg());
+        }
+        
+        // Handle empty response or error in response
+        if (empty($body)) {
+            error_log("❌ Empty response body");
+            return new WP_Error('empty_response', 'Empty response from API');
+        }
+        
+        // Handle API error response
+        if (isset($body['gjenstaendeKvote'])) {
+            // This is the response format for errors
+            $error_message = isset($body['feilmelding']) ? $body['feilmelding'] : 'Unknown API error';
+            error_log("❌ API error message: $error_message");
+            return new WP_Error('api_error', $error_message);
+        }
+        
+        // Check first item for errors
+        if (is_array($body) && !empty($body[0]) && isset($body[0]['feilmelding'])) {
+            $error_message = $body[0]['feilmelding'];
             error_log("❌ Vehicle not found: $error_message");
             return new WP_Error('not_found', $error_message);
+        }
+
+        // Check for valid vehicle data
+        if (empty($body[0]['kjoretoydata'])) {
+            error_log("❌ No vehicle data in response");
+            return new WP_Error('no_vehicle_data', 'No vehicle data in response');
         }
         
         // Process and prepare data for display
         error_log("✅ Vehicle data received for: $registration_number");
-        $vehicle_data = $this->prepare_vehicle_data($body[0]);
+        $vehicle_data = $this->prepare_vehicle_data($body[0]['kjoretoydata']);
         
         // Cache for 6 hours
-        set_transient($cache_key, $vehicle_data, 6 * HOUR_IN_SECONDS);
+        SVV_API_Cache::set($cache_key, $vehicle_data, 6 * HOUR_IN_SECONDS);
         
         return $vehicle_data;
     }
@@ -406,7 +471,7 @@ class SVV_API_Integration {
      * @return array Processed data
      */
     private function prepare_vehicle_data($raw_data) {
-        // Check the structure of the raw data for debugging
+        // Log the raw data structure for debugging
         error_log("🔍 Raw data structure: " . json_encode(array_keys($raw_data)));
         
         // Split data into teaser (free) and protected (paid) parts
@@ -434,9 +499,13 @@ class SVV_API_Integration {
                     $raw_data['registrering']['historikk'] : [],
                 'status' => isset($raw_data['registrering']['registreringsstatus']) ?
                     $raw_data['registrering']['registreringsstatus'] : []
-            ],
-            'raw_data' => $raw_data // Store raw data for debugging
+            ]
         ];
+        
+        // Include raw data for debugging if needed
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            $data['raw_data'] = $raw_data;
+        }
         
         return $data;
     }
