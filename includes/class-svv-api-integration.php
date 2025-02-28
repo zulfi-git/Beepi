@@ -36,10 +36,10 @@ class SVV_API_Integration {
         $environment = defined('SVV_API_ENVIRONMENT') ? SVV_API_ENVIRONMENT : 'prod';
         if ($environment === 'test') {
             $this->maskinporten_token_url = 'https://test.maskinporten.no/token';
-            $this->svv_api_base_url = 'https://akfell-datautlevering-sisdinky.utv.atlas.vegvesen.no';
+            $this->svv_api_base_url = 'https://akfell-oppslag-sisdinky.utv.atlas.vegvesen.no/rest/distribusjon/kjoretoy/v2.0';
         } else {
             $this->maskinporten_token_url = 'https://maskinporten.no/token';
-            $this->svv_api_base_url = 'https://akfell-datautlevering.atlas.vegvesen.no/kjoretoyoppslag';
+            $this->svv_api_base_url = 'https://akfell-oppslag.atlas.vegvesen.no/rest/distribusjon/kjoretoy/v2.0';
         }
         
         error_log("🔧 SVV API Integration initialized - Environment: $environment");
@@ -358,7 +358,7 @@ class SVV_API_Integration {
         error_log("🔑 Token being used (first 20 chars): " . substr($token, 0, 20));
         
         // Call SVV API - try with array of objects format first
-        $endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke';
+        $endpoint = $this->svv_api_base_url . '/bulk/kjennemerke';
         $request_body_1 = [['kjennemerke' => $registration_number]];
         
         error_log("🔄 Calling SVV API endpoint: $endpoint");
