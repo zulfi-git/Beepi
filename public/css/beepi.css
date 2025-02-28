@@ -1,0 +1,216 @@
+/**
+ * Frontend styles for Beepi plugin
+ */
+
+/* Container */
+.beepi-container {
+    max-width: 800px;
+    margin: 0 auto;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+}
+
+/* Search form */
+.beepi-form {
+    margin-bottom: 2rem;
+}
+
+.beepi-form form {
+    display: flex;
+    justify-content: center;
+}
+
+.beepi-form .form-group {
+    display: flex;
+    width: 100%;
+    max-width: 600px;
+}
+
+.beepi-form input[type="text"] {
+    flex: 1;
+    padding: 12px 15px;
+    font-size: 16px;
+    border: 1px solid #ddd;
+    border-radius: 4px 0 0 4px;
+    outline: none;
+}
+
+.beepi-form input[type="text"]:focus {
+    border-color: #3498db;
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+}
+
+.vehicle-search-button {
+    padding: 12px 20px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 0 4px 4px 0;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 600;
+    transition: background-color 0.2s;
+}
+
+.vehicle-search-button:hover {
+    background-color: #2980b9;
+}
+
+/* Loading indicator */
+.beepi-loading {
+    text-align: center;
+    padding: 2rem;
+    color: #666;
+}
+
+/* Error messages */
+.beepi-error {
+    border-left: 4px solid #e74c3c;
+    background-color: #fae9e8;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    border-radius: 0 4px 4px 0;
+}
+
+.beepi-error p {
+    margin: 0;
+    color: #c0392b;
+}
+
+/* Teaser results */
+.vehicle-teaser {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    margin-bottom: 2rem;
+}
+
+.vehicle-teaser-header {
+    background-color: #f5f7fa;
+    padding: 1.5rem;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.vehicle-teaser-header h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1.8rem;
+    color: #2c3e50;
+    font-weight: 600;
+}
+
+.vehicle-reg-number {
+    display: inline-block;
+    background-color: #34495e;
+    color: white;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.vehicle-teaser-body {
+    padding: 1.5rem;
+}
+
+.vehicle-teaser-section {
+    margin-bottom: 2rem;
+}
+
+.vehicle-teaser-section h3 {
+    margin: 0 0 1rem;
+    font-size: 1.3rem;
+    color: #2c3e50;
+    font-weight: 600;
+    border-bottom: 2px solid #f1f1f1;
+    padding-bottom: 0.5rem;
+}
+
+.vehicle-info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.vehicle-info-item {
+    margin-bottom: 0.5rem;
+}
+
+.info-label {
+    font-weight: 600;
+    color: #7f8c8d;
+}
+
+.info-value {
+    color: #2c3e50;
+}
+
+/* Owner information (locked) */
+.vehicle-owner-locked {
+    background-color: #f8f9fa;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #e9ecef;
+}
+
+.locked-content {
+    padding: 2rem;
+    text-align: center;
+}
+
+.lock-icon {
+    margin-bottom: 1rem;
+}
+
+.lock-icon svg {
+    width: 40px;
+    height: 40px;
+    color: #7f8c8d;
+}
+
+.locked-content h3 {
+    margin: 0 0 0.5rem;
+    color: #2c3e50;
+}
+
+.locked-content p {
+    margin: 0 0 1.5rem;
+    color: #7f8c8d;
+}
+
+.view-owner-button {
+    display: inline-block;
+    background-color: #2ecc71;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 4px;
+    text-decoration: none;
+    font-weight: 600;
+    transition: background-color 0.2s;
+}
+
+.view-owner-button:hover {
+    background-color: #27ae60;
+    color: white;
+    text-decoration: none;
+}
+
+/* Responsive adjustments */
+@media (max-width: 600px) {
+    .beepi-form .form-group {
+        flex-direction: column;
+    }
+    
+    .beepi-form input[type="text"] {
+        border-radius: 4px;
+        margin-bottom: 0.5rem;
+    }
+    
+    .vehicle-search-button {
+        border-radius: 4px;
+        width: 100%;
+    }
+    
+    .vehicle-info-grid {
+        grid-template-columns: 1fr;
+    }
+}
