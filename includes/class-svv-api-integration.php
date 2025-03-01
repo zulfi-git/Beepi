@@ -24,7 +24,7 @@ class SVV_API_Integration {
         $this->client_id = $this->integration_id; // In Maskinporten, these are the same
         $this->kid = '1423203a-dc67-4ae1-9a96-63d8bb71e169';
         $this->org_no = '998453240';
-        $this->scope = 'svv:kjoretoy/kjoretoyopplysninger';
+        $this->scope = 'svv:kjoretoy/kjoretoyopplysninger.delegert';
         
         // Use PEM file instead of P12
         $this->certificate_path = '/customers/f/6/e/cdi58sx9l/webroots/af2cfe37/cert/private.pem';
