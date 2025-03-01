@@ -24,10 +24,10 @@ class SVV_API_Integration {
         $this->client_id = $this->integration_id; // In Maskinporten, these are the same
         $this->kid = '1423203a-dc67-4ae1-9a96-63d8bb71e169';
         $this->org_no = '998453240';
-        $this->scope = 'svv:kjoretoy/kjoretoyopplysninger.delegert';
+        $this->scope = 'svv:kjoretoy/kjoretoyopplysninger';
         
-        // Use PEM file instead of P12
-        $this->certificate_path = '/customers/f/6/e/cdi58sx9l/webroots/af2cfe37/cert/private.pem';
+        // Get certificate path from wp-config
+        $this->certificate_path = defined('SVV_CERT_PATH') ? SVV_CERT_PATH : '/default/path/to/cert/private.pem';
         
         // Get certificate password from wp-config
         $this->certificate_password = defined('SVV_CERT_PASSWORD') ? SVV_CERT_PASSWORD : '';
