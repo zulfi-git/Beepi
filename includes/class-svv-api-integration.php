@@ -14,6 +14,7 @@ class SVV_API_Integration {
     private $svv_api_base_url;
     private $token_cache_key = 'svv_access_token';
     private $token_cache_expiry = 3500; // Slightly less than 1 hour to ensure we don't use expired tokens
+    private $debug_mode;
     
     /**
      * Constructor
@@ -41,6 +42,9 @@ class SVV_API_Integration {
             $this->maskinporten_token_url = 'https://maskinporten.no/token';
             $this->svv_api_base_url = 'https://akfell-datautlevering.atlas.vegvesen.no';
         }
+        
+        // Get debug mode from wp-config
+        $this->debug_mode = defined('SVV_API_DEBUG') ? SVV_API_DEBUG : false;
         
         error_log("🔧 SVV API Integration initialized - Environment: $environment");
         error_log("🔧 SVV API Base URL: {$this->svv_api_base_url}");
@@ -196,9 +200,11 @@ class SVV_API_Integration {
         $encoded_signature = $this->base64url_encode($signature);
         $jwt = $encoded_header . '.' . $encoded_payload . '.' . $encoded_signature;
 
-        // Log JWT parts for debugging
-        error_log("🛠 Debug JWT Header: " . json_encode($header));
-        error_log("🛠 Debug JWT Payload: " . json_encode($payload));
+        // Log JWT parts for debugging if debug mode is enabled
+        if ($this->debug_mode) {
+            error_log("🛠 Debug JWT Header: " . json_encode($header));
+            error_log("🛠 Debug JWT Payload: " . json_encode($payload));
+        }
 
         return $jwt;
     }
@@ -354,8 +360,10 @@ class SVV_API_Integration {
             return $token;
         }
         
-        // Log the token being used (first 20 chars only for security)
-        error_log("🔑 Token being used (first 20 chars): " . substr($token, 0, 20));
+        // Log the token being used (first 20 chars only for security) if debug mode is enabled
+        if ($this->debug_mode) {
+            error_log("🔑 Token being used (first 20 chars): " . substr($token, 0, 20));
+        }
         
         // Call SVV API - try with array of objects format first
         $endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke/';
@@ -528,8 +536,10 @@ class SVV_API_Integration {
      * @return array Processed data
      */
     private function prepare_vehicle_data($raw_data) {
-        // Log the raw data structure for debugging
-        error_log("🔍 Raw data structure: " . json_encode(array_keys($raw_data)));
+        // Log the raw data structure for debugging if debug mode is enabled
+        if ($this->debug_mode) {
+            error_log("🔍 Raw data structure: " . json_encode(array_keys($raw_data)));
+        }
         
         // Initialize with default values
         $data = [
