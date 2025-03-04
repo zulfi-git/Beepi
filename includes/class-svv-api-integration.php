@@ -1,11 +1,16 @@
 <?php
 /**
  * Handles integration with Maskinporten for authentication and Statens Vegvesen API for vehicle data
+ * 
+ * The following constants MUST be added to wp-config.php:
+ * - SVV_CERT_PATH: Path to the certificate file
+ * - SVV_CERT_PASSWORD: Password for the certificate (if needed)
+ * - SVV_API_ENVIRONMENT: 'test' or 'prod'
+ * - SVV_API_DEBUG: true or false
  */
 class SVV_API_Integration {
     private $integration_id;
     private $client_id;
-    private $kid;
     private $org_no;
     private $certificate_path;
     private $certificate_password;
@@ -23,12 +28,11 @@ class SVV_API_Integration {
         // Load configuration
         $this->integration_id = '2d5adb28-0e61-46aa-9fc0-8772b5206c7c';
         $this->client_id = $this->integration_id; // In Maskinporten, these are the same
-        $this->kid = '1423203a-dc67-4ae1-9a96-63d8bb71e169';
         $this->org_no = '998453240';
         $this->scope = 'svv:kjoretoy/kjoretoyopplysninger';
         
         // Get certificate path from wp-config
-        $this->certificate_path = defined('SVV_CERT_PATH') ? SVV_CERT_PATH : '/default/path/to/cert/private.pem';
+        $this->certificate_path = defined('SVV_CERT_PATH') ? SVV_CERT_PATH : '/path/to/default/cert.pem';
         
         // Get certificate password from wp-config
         $this->certificate_password = defined('SVV_CERT_PASSWORD') ? SVV_CERT_PASSWORD : '';
@@ -48,6 +52,7 @@ class SVV_API_Integration {
         
         error_log("🔧 SVV API Integration initialized - Environment: $environment");
         error_log("🔧 SVV API Base URL: {$this->svv_api_base_url}");
+        error_log("🔧 Certificate Path: {$this->certificate_path}");
     }
 
     /**
@@ -68,11 +73,6 @@ class SVV_API_Integration {
         // Create JWT grant
         $jwt = $this->create_jwt_grant();
         if (is_wp_error($jwt)) {
-            return $jwt;
-        }
-
-        // Send request to Maskinporten
-        error_log("🔄 Sending token request to: {$this->maskinporten_token_url}");
         
         $response = wp_remote_post($this->maskinporten_token_url, [
             'headers' => [
