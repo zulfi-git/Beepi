@@ -140,11 +140,14 @@ class SVV_API_Integration {
             return new WP_Error('cert_data_not_found', 'No certificate data found for x5c header');
         }
 
+        // Get kid from wp-config
+        $kid = defined('SVV_API_KID') ? SVV_API_KID : 'default_kid';
+
         // Create JWT header with x5c and kid - Maskinporten requires this
         $header = [
             'alg' => 'RS256',
             'x5c' => [$cert_data],
-            'kid' => '1423203a-dc67-4ae1-9a96-63d8bb71e169' // Get this from Maskinporten registration
+            'kid' => $kid
         ];
 
         // Create JWT payload
@@ -264,8 +267,8 @@ class SVV_API_Integration {
         return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
             mt_rand(0, 0xffff), mt_rand(0, 0xffff),
             mt_rand(0, 0xffff),
-            mt_rand(0, 0x0fff) | 0x4000,
-            mt_rand(0, 0x3fff) | 0x8000,
+            mt_rand(0x0fff) | 0x4000,
+            mt_rand(0x3fff) | 0x8000,
             mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
         );
     }
