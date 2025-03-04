@@ -422,74 +422,17 @@ class SVV_API_Integration {
             return $response;
         }
         
-        // If we get 401, try alternate request format
-        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 401) {
-            $response_body = wp_remote_retrieve_body($response);
-            error_log("🔄 First request format failed with 401 - Response: " . $response_body);
-            
-            // Try with simple object format
-            $request_body_2 = ['kjennemerke' => $registration_number];
-            error_log("🔄 Trying alternate request format");
-            error_log("🔄 Request body (format 2): " . json_encode($request_body_2));
-            
-            $response = wp_remote_post($endpoint, [
-                'headers' => [
-                    'Content-Type' => 'application/json',
-                    'Accept' => 'application/json',
-                    'Authorization' => 'Bearer ' . $token
-                ],
-                'body' => json_encode($request_body_2),
-                'timeout' => 15,
-                'sslverify' => true,
-            ]);
-        }
-        
-        // If still getting 401, try a direct endpoint
-        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 401) {
-            $response_body = wp_remote_retrieve_body($response);
-            error_log("🔄 Second request format failed with 401 - Response: " . $response_body);
-            
-            // Clear token cache and get a new token
-            SVV_API_Cache::delete($this->token_cache_key);
-            error_log("🔄 Clearing token cache and getting new token");
-            
-            $token = $this->get_access_token();
-            if (is_wp_error($token)) {
-                return $token;
-            }
-            
-            error_log("🔑 New token obtained (first 20 chars): " . substr($token, 0, 20));
-            
-            // Try with GET endpoint if available
-            error_log("🔄 Trying direct endpoint with new token");
-            $direct_endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke' . urlencode($registration_number);
-            error_log("🔄 Direct endpoint URL: " . $direct_endpoint);
-            
-            $response = wp_remote_get($direct_endpoint, [
-                'headers' => [
-                    'Accept' => 'application/json',
-                    'Authorization' => 'Bearer ' . $token
-                ],
-                'timeout' => 15,
-                'sslverify' => true,
-            ]);
-        }
-        
-        if (is_wp_error($response)) {
-            error_log("❌ SVV API error: " . $response->get_error_message());
-            return $response;
-        }
-        
         $status_code = wp_remote_retrieve_response_code($response);
         $response_body = wp_remote_retrieve_body($response);
         
-        error_log("🔄 Final API response status: $status_code");
-        error_log("🔄 Response body (first 500 chars): " . substr($response_body, 0, 500));
-        
         if ($status_code !== 200) {
             error_log("❌ API error: HTTP Status $status_code");
+            error_log("Response body: " . substr($response_body, 0, 500));
             return new WP_Error('api_error', "API error: HTTP Status $status_code");
         }
+        
+        error_log("🔄 Final API response status: $status_code");
+        error_log("🔄 Response body (first 500 chars): " . substr($response_body, 0, 500));
         
         // Try to decode JSON response
         $body = json_decode($response_body, true);
