@@ -265,11 +265,11 @@ class SVV_API_Integration {
      */
     private function generate_uuid() {
         return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-            mt_rand(0, 0xffff), mt_rand(0, 0xffff),
-            mt_rand(0, 0xffff),
-            mt_rand(0x0fff) | 0x4000,
-            mt_rand(0x3fff) | 0x8000,
-            mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+            mt_rand(0, 0xffff), mt_rand(0, 0xffff),   // First two random 16-bit segments
+            mt_rand(0, 0xffff),                       // Third random 16-bit segment
+            mt_rand(0, 0x0fff) | 0x4000,              // Fourth segment with version 4 bit set
+            mt_rand(0, 0x3fff) | 0x8000,              // Fifth segment with variant bit set
+            mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)  // Last three random segments
         );
     }
     
