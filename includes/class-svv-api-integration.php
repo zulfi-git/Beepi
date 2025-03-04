@@ -144,7 +144,7 @@ class SVV_API_Integration {
         $header = [
             'alg' => 'RS256',
             'x5c' => [$cert_data],
-            'kid' => 'your_registered_key_identifier' // Get this from Maskinporten registration
+            'kid' => '1423203a-dc67-4ae1-9a96-63d8bb71e169' // Get this from Maskinporten registration
         ];
 
         // Create JWT payload
