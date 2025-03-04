@@ -1,12 +1,6 @@
 <?php
 /**
- * Handles integration with Maskinporten for authentication and Statens Vegvesen API for vehicle data
- * 
- * The following constants MUST be added to wp-config.php:
- * - SVV_CERT_PATH: Path to the certificate file
- * - SVV_CERT_PASSWORD: Password for the certificate (if needed)
- * - SVV_API_ENVIRONMENT: 'test' or 'prod'
- * - SVV_API_DEBUG: true or false
+ * Handles integration with Statens Vegvesen API
  */
 class SVV_API_Integration {
     private $integration_id;
