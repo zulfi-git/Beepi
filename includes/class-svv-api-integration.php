@@ -67,6 +67,8 @@ class SVV_API_Integration {
         // Create JWT grant
         $jwt = $this->create_jwt_grant();
         if (is_wp_error($jwt)) {
+            return $jwt;
+        }
         
         $response = wp_remote_post($this->maskinporten_token_url, [
             'headers' => [
@@ -132,16 +134,17 @@ class SVV_API_Integration {
             return $cert_data;
         }
 
-        // Create JWT header with kid AND x5c - Maskinporten requires one of these
+        // SVV requires virksomhetssertifikat in the x5c header
+        if (empty($cert_data)) {
+            error_log("❌ No certificate data found for x5c header");
+            return new WP_Error('cert_data_not_found', 'No certificate data found for x5c header');
+        }
+
+        // Create JWT header with x5c - Maskinporten requires this
         $header = [
             'alg' => 'RS256',
-            'kid' => $this->kid,
+            'x5c' => [$cert_data],
         ];
-        
-        // Add x5c if we have certificate data
-        if (!empty($cert_data)) {
-            $header['x5c'] = [$cert_data];
-        }
 
         // Create JWT payload
         $now = time();
@@ -210,16 +213,33 @@ class SVV_API_Integration {
      * @return string|WP_Error Base64 encoded certificate data or error
      */
     private function extract_cert_data($private_key) {
-        // Try to extract certificate from the PEM file
+        // Try to extract certificate from the provided private key file
         if (preg_match('/-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----/s', $private_key, $matches)) {
             // Clean up the certificate data (remove new lines and whitespace)
             return str_replace(["\r", "\n", " "], '', $matches[1]);
         }
-        
-        // If we can't find a certificate in the PEM file, we'll use kid instead
-        // This is not an error since we can authenticate with kid only if necessary
-        error_log("ℹ️ No certificate found in PEM file, will use kid for authentication");
-        return '';
+
+        // Check for public.pem file in the same directory
+        $public_cert_path = dirname($this->certificate_path) . '/public.pem';
+        if (file_exists($public_cert_path)) {
+            $public_cert = file_get_contents($public_cert_path);
+            if ($public_cert && preg_match('/-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----/s', $public_cert, $matches)) {
+                return str_replace(["\r", "\n", " "], '', $matches[1]);
+            }
+        }
+
+        // Check for sign.pem file in the same directory
+        $sign_cert_path = dirname($this->certificate_path) . '/sign.pem';
+        if (file_exists($sign_cert_path)) {
+            $sign_cert = file_get_contents($sign_cert_path);
+            if ($sign_cert && preg_match('/-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----/s', $sign_cert, $matches)) {
+                return str_replace(["\r", "\n", " "], '', $matches[1]);
+            }
+        }
+
+        // If no certificate found, return an error
+        error_log("❌ No certificate found in provided private key file or in public.pem/sign.pem files");
+        return new WP_Error('cert_not_found', 'No certificate found in provided private key file or in public.pem/sign.pem files');
     }
 
     /**
