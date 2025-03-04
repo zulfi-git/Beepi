@@ -140,10 +140,11 @@ class SVV_API_Integration {
             return new WP_Error('cert_data_not_found', 'No certificate data found for x5c header');
         }
 
-        // Create JWT header with x5c - Maskinporten requires this
+        // Create JWT header with x5c and kid - Maskinporten requires this
         $header = [
             'alg' => 'RS256',
             'x5c' => [$cert_data],
+            'kid' => 'your_registered_key_identifier' // Get this from Maskinporten registration
         ];
 
         // Create JWT payload
