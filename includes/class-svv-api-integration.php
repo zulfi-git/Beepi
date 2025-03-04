@@ -141,7 +141,7 @@ class SVV_API_Integration {
         }
 
         // Get kid from wp-config
-        $kid = defined('SVV_API_KID') ? SVV_API_KID : '1423203a-dc67-4ae1-9a96-63d8bb71e169';
+        $kid = SVV_API_KID;
 
         // Create JWT header with x5c and kid - Maskinporten requires this
         $header = [
