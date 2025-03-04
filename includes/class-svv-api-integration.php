@@ -214,33 +214,35 @@ class SVV_API_Integration {
      * @return string|WP_Error Base64 encoded certificate data or error
      */
     private function extract_cert_data($private_key) {
+        // Check for certificate.pem file in the same directory
+        $cert_path = dirname($this->certificate_path) . '/certificate.pem';
+        if (file_exists($cert_path)) {
+            $cert_data = file_get_contents($cert_path);
+            if ($cert_data && preg_match('/-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----/s', $cert_data, $matches)) {
+                error_log("🔍 Certificate extracted from certificate.pem");
+                return str_replace(["\r", "\n", " "], '', $matches[1]);
+            }
+        }
+
+        // Check for private.pem file in the same directory
+        $private_cert_path = dirname($this->certificate_path) . '/private.pem';
+        if (file_exists($private_cert_path)) {
+            $private_cert = file_get_contents($private_cert_path);
+            if ($private_cert && preg_match('/-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----/s', $private_cert, $matches)) {
+                error_log("🔍 Certificate extracted from private.pem");
+                return str_replace(["\r", "\n", " "], '', $matches[1]);
+            }
+        }
+
         // Try to extract certificate from the provided private key file
         if (preg_match('/-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----/s', $private_key, $matches)) {
-            // Clean up the certificate data (remove new lines and whitespace)
+            error_log("🔍 Certificate extracted from provided private key file");
             return str_replace(["\r", "\n", " "], '', $matches[1]);
         }
 
-        // Check for public.pem file in the same directory
-        $public_cert_path = dirname($this->certificate_path) . '/public.pem';
-        if (file_exists($public_cert_path)) {
-            $public_cert = file_get_contents($public_cert_path);
-            if ($public_cert && preg_match('/-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----/s', $public_cert, $matches)) {
-                return str_replace(["\r", "\n", " "], '', $matches[1]);
-            }
-        }
-
-        // Check for sign.pem file in the same directory
-        $sign_cert_path = dirname($this->certificate_path) . '/sign.pem';
-        if (file_exists($sign_cert_path)) {
-            $sign_cert = file_get_contents($sign_cert_path);
-            if ($sign_cert && preg_match('/-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----/s', $sign_cert, $matches)) {
-                return str_replace(["\r", "\n", " "], '', $matches[1]);
-            }
-        }
-
         // If no certificate found, return an error
-        error_log("❌ No certificate found in provided private key file or in public.pem/sign.pem files");
-        return new WP_Error('cert_not_found', 'No certificate found in provided private key file or in public.pem/sign.pem files');
+        error_log("❌ No certificate found in certificate.pem, private.pem, or provided private key file");
+        return new WP_Error('cert_not_found', 'No certificate found in certificate.pem, private.pem, or provided private key file');
     }
 
     /**
