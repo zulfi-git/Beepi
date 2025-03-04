@@ -26,7 +26,7 @@ class SVV_API_Integration {
         $this->scope = 'svv:kjoretoy/kjoretoyopplysninger';
         
         // Get certificate path from wp-config
-        $this->certificate_path = defined('SVV_CERT_PATH') ? SVV_CERT_PATH : '/path/to/default/cert.pem';
+        $this->certificate_path = SVV_CERT_PATH;
         
         // Get certificate password from wp-config
         $this->certificate_password = defined('SVV_CERT_PASSWORD') ? SVV_CERT_PASSWORD : '';
