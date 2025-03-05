@@ -170,9 +170,8 @@ class SVV_API_Integration {
             'exp' => $exp,
             'iat' => $now,
             'jti' => $this->generate_uuid(),
-            
-            // Add resource for Statens Vegvesen API
-            'resource' => [$resource]
+            'resource' => [$resource],
+            'client_amr' => 'virksomhetssertifikat'  // Add this line
         ];
 
         // Base64-url encode header and payload
