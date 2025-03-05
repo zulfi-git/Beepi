@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Beepi
  * Description: Vehicle information lookup service using Statens Vegvesen API
- * Version: 1.0.0
+ * Version: 2.0.0
  * Author: Zulfiqar Ali Haidari
  * Author URI: https://beepi.no
  * Text Domain: beepi

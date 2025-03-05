@@ -4,6 +4,13 @@
 (function($) {
     'use strict';
 
+    // Validation patterns
+    const REGISTRATION_PATTERNS = {
+        NO: /^[A-Z]{2}[0-9]{4,5}$/, // Norwegian format
+        NO_EL: /^E[A-Z][0-9]{4,5}$/, // Norwegian electric vehicles
+        NO_OLD: /^[A-Z]{1,2}[0-9]{4,5}$/ // Older Norwegian format
+    };
+
     // When the document is ready
     $(document).ready(function() {
         // Handle form submission
@@ -12,53 +19,106 @@
             
             const form = $(this);
             const resultContainer = $('#vehicle-lookup-results');
-            const registration = $('#vehicle-registration').val().toUpperCase();
+            const registration = $('#vehicle-registration').val().toUpperCase().replace(/\s+/g, '');
             
-            // Validate registration number format
-            if (!registration.match(/^[A-Z0-9]+$/)) {
-                resultContainer.html('<div class="beepi-error"><p>Invalid registration number format.</p></div>');
+            // Enhanced validation
+            if (!validateRegistration(registration)) {
+                showError(resultContainer, 'Invalid registration number format. Please check and try again.');
+                highlightField($('#vehicle-registration'));
                 return;
             }
             
-            // Show loading indicator
-            resultContainer.html('<div class="beepi-loading">' + beepi.loading_text + '</div>');
+            showLoading(resultContainer);
             
-            // Collect form data
-            const formData = {
-                action: 'vehicle_lookup',
-                nonce: beepi.nonce,
-                registration: registration
-            };
-            
-            // Add partner ID if present
-            const partnerIdField = form.find('input[name="partner_id"]');
-            if (partnerIdField.length > 0) {
-                formData.partner_id = partnerIdField.val();
-            }
-            
-            // Send AJAX request
             $.ajax({
                 url: beepi.ajax_url,
                 type: 'POST',
-                data: formData,
-                success: function(response) {
-                    if (response.success) {
-                        // Render teaser results
-                        renderTeaserResults(response.data, resultContainer);
-                    } else {
-                        // Show error message
-                        const message = response.data && response.data.message ? response.data.message : beepi.error_text;
-                        resultContainer.html('<div class="beepi-error"><p>' + message + '</p></div>');
-                    }
+                data: {
+                    action: 'vehicle_lookup',
+                    nonce: beepi.nonce,
+                    registration: registration,
+                    partner_id: form.find('input[name="partner_id"]').val() || ''
                 },
-                error: function() {
-                    // Show generic error message
-                    resultContainer.html('<div class="beepi-error"><p>' + beepi.error_text + '</p></div>');
+                success: function(response) {
+                    handleLookupResponse(response, resultContainer);
+                },
+                error: function(xhr, status, error) {
+                    handleAjaxError(xhr, status, error, resultContainer);
                 }
             });
         });
     });
-    
+
+    function validateRegistration(reg) {
+        return Object.values(REGISTRATION_PATTERNS).some(pattern => pattern.test(reg));
+    }
+
+    function showLoading(container) {
+        container.html(`
+            <div class="beepi-loading">
+                <div class="loading-spinner"></div>
+                <p>${beepi.loading_text}</p>
+            </div>
+        `);
+    }
+
+    function showError(container, message, details = '') {
+        container.html(`
+            <div class="beepi-error">
+                <div class="error-icon">⚠️</div>
+                <p class="error-message">${message}</p>
+                ${details ? `<p class="error-details">${details}</p>` : ''}
+                <button class="retry-button" onclick="window.location.reload()">Try Again</button>
+            </div>
+        `);
+    }
+
+    function handleLookupResponse(response, container) {
+        if (!response || typeof response !== 'object') {
+            showError(container, beepi.error_text, 'Invalid response from server');
+            return;
+        }
+
+        if (response.success && response.data) {
+            if (!validateResponseData(response.data)) {
+                showError(container, 'Incomplete vehicle data received');
+                return;
+            }
+            renderTeaserResults(response.data, container);
+        } else {
+            const message = response.data?.user_message || response.data?.message || beepi.error_text;
+            showError(container, message);
+        }
+    }
+
+    function validateResponseData(data) {
+        return data.teaser && data.teaser.reg_number && 
+               (data.teaser.brand || data.teaser.model);
+    }
+
+    function handleAjaxError(xhr, status, error, container) {
+        let errorMessage = 'Could not complete the vehicle lookup';
+        let details = '';
+
+        if (xhr.responseJSON?.data?.user_message) {
+            errorMessage = xhr.responseJSON.data.user_message;
+            details = xhr.responseJSON.data.message || '';
+        } else if (status === 'timeout') {
+            errorMessage = 'Request timed out. Please try again.';
+        } else if (status === 'parsererror') {
+            errorMessage = 'Could not process the response from server.';
+        }
+
+        showError(container, errorMessage, details);
+    }
+
+    function highlightField($field) {
+        $field.addClass('error')
+              .one('input', function() {
+                  $(this).removeClass('error');
+              });
+    }
+
     /**
      * Render teaser results
      * 
@@ -164,16 +224,20 @@
      * @return {string} The formatted date
      */
     function formatDate(dateString) {
-        if (!dateString) {
-            return '';
-        }
+        if (!dateString) return '-';
         
-        const date = new Date(dateString);
-        if (isNaN(date.getTime())) {
-            return dateString; // Return original if not a valid date
+        try {
+            const date = new Date(dateString);
+            if (isNaN(date.getTime())) return dateString;
+            
+            return new Intl.DateTimeFormat(beepi.locale || 'nb-NO', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            }).format(date);
+        } catch (e) {
+            return dateString;
         }
-        
-        return date.toLocaleDateString();
     }
 
 })(jQuery);
