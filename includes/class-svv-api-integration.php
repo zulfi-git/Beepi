@@ -1003,7 +1003,7 @@ class SVV_API_Integration {
             $start_time = microtime(true);
             
             // Test with a known registration number
-            $test_reg = 'TEST123';
+            $test_reg = 'CU11262';
             $endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke';
             
             $token = $this->get_access_token();
