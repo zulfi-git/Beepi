@@ -401,8 +401,8 @@ class SVV_API_Integration {
             error_log("🔑 Token being used (first 20 chars): " . substr($token, 0, 20));
         }
         
-        // Call SVV API with trailing slash
-        $endpoint = rtrim($this->svv_api_base_url, '/') . '/kjoretoyoppslag/bulk/kjennemerke/';
+        // Call SVV API
+        $endpoint = rtrim($this->svv_api_base_url, '/') . '/kjoretoyoppslag/bulk/kjennemerke';
         $request_body = [['kjennemerke' => $registration_number]];
         
         error_log("🔄 Calling SVV API endpoint: $endpoint");
