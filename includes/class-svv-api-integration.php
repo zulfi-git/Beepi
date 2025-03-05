@@ -14,6 +14,7 @@ class SVV_API_Integration {
     private $token_cache_key = 'svv_access_token';
     private $token_cache_expiry = 3500; // Slightly less than 1 hour to ensure we don't use expired tokens
     private $debug_mode;
+    private $cache_enabled;
     
     /**
      * Constructor
@@ -44,9 +45,25 @@ class SVV_API_Integration {
         // Get debug mode from wp-config
         $this->debug_mode = defined('SVV_API_DEBUG') ? SVV_API_DEBUG : true;
         
+        // Get cache setting from wp-config
+        $this->cache_enabled = defined('SVV_API_CACHE_ENABLED') ? SVV_API_CACHE_ENABLED : true;
+        SVV_API_Cache::set_cache_enabled($this->cache_enabled);
+        
         error_log("🔧 SVV API Integration initialized - Environment: $environment");
         error_log("🔧 SVV API Base URL: {$this->svv_api_base_url}");
         error_log("🔧 Certificate Path: {$this->certificate_path}");
+        error_log("🔧 Cache " . ($this->cache_enabled ? "enabled" : "disabled"));
+    }
+
+    /**
+     * Enable or disable caching
+     * 
+     * @param bool $enabled Whether caching should be enabled
+     */
+    public function set_cache_enabled($enabled) {
+        $this->cache_enabled = (bool) $enabled;
+        SVV_API_Cache::set_cache_enabled($this->cache_enabled);
+        error_log("🔧 Cache " . ($enabled ? "enabled" : "disabled"));
     }
 
     /**

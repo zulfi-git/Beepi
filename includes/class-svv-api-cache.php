@@ -11,6 +11,28 @@ class SVV_API_Cache {
     const VEHICLE_CACHE_TIME = 21600; // 6 hours
     const ERROR_CACHE_TIME = 300; // 5 minutes for errors (shorter time)
     
+    // Cache control
+    private static $cache_enabled = true;
+    
+    /**
+     * Enable or disable caching
+     * 
+     * @param bool $enabled Whether caching should be enabled
+     */
+    public static function set_cache_enabled($enabled) {
+        self::$cache_enabled = (bool) $enabled;
+        error_log("🔧 Cache " . ($enabled ? "enabled" : "disabled"));
+    }
+    
+    /**
+     * Check if caching is enabled
+     * 
+     * @return bool Whether caching is enabled
+     */
+    public static function is_cache_enabled() {
+        return self::$cache_enabled;
+    }
+    
     /**
      * Get cached item
      * 
@@ -18,6 +40,11 @@ class SVV_API_Cache {
      * @return mixed|false Cached value or false
      */
     public static function get($key) {
+        if (!self::$cache_enabled) {
+            error_log("🔧 Cache disabled - skipping get for key: $key");
+            return false;
+        }
+        
         $full_key = self::get_full_key($key);
         return get_transient($full_key);
     }
@@ -31,6 +58,11 @@ class SVV_API_Cache {
      * @return bool Success
      */
     public static function set($key, $value, $expiration = null) {
+        if (!self::$cache_enabled) {
+            error_log("🔧 Cache disabled - skipping set for key: $key");
+            return false;
+        }
+        
         $full_key = self::get_full_key($key);
         
         // If expiration not specified, determine based on content
