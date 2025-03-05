@@ -148,6 +148,15 @@ class SVV_API_Integration {
             // Cache the token using the expires_in value from Maskinporten response
             $expires_in = isset($body['expires_in']) ? (int)$body['expires_in'] - 60 : $this->token_cache_expiry;
             SVV_API_Cache::set($this->token_cache_key, $token, $expires_in);
+                error_log("⚠️ Token compliance issues detected");
+            error_log("✅ Successfully obtained Maskinporten token");
+            return $token;log("🔍 Compliance details: " . json_encode($compliance_result['details'], JSON_PRETTY_PRINT));
+                }
+        } catch (Exception $e) {
+            $error_message = "🚨 Token generation failed: " . $e->getMessage();
+            error_log($error_message);he expires_in value from Maskinporten response
+            $expires_in = isset($body['expires_in']) ? (int)$body['expires_in'] - 60 : $this->token_cache_expiry;
+            SVV_API_Cache::set($this->token_cache_key, $token, $expires_in);
             
             error_log("✅ Successfully obtained Maskinporten token");
             return $token;
@@ -275,85 +284,85 @@ class SVV_API_Integration {
      * Extract certificate data from PEM file for use in x5c header
      * 
      * @return string|WP_Error Base64 encoded certificate data or error
-     */
-    private function extract_cert_data() {
-        error_log("🔍 Looking for certificate data");
-        
-        // Define possible certificate locations
-        $cert_file_paths = [
-            dirname($this->certificate_path) . '/certificate.pem',
-            $this->certificate_path,
-            str_replace('private.pem', 'certificate.pem', $this->certificate_path),
             dirname($this->certificate_path) . '/public.pem',
             dirname($this->certificate_path) . '/cert.pem',
-        ];
+        ];ror_log("🔍 Looking for certificate data");
         
-        // Try each location
+        // Try each locationertificate locations
         foreach ($cert_file_paths as $path) {
-            if (!file_exists($path)) {
-                continue;
-            }
-            
-            error_log("✅ Found file at: $path");
+            if (!file_exists($path)) {_path) . '/certificate.pem',
+                continue;icate_path,
+            }tr_replace('private.pem', 'certificate.pem', $this->certificate_path),
+            dirname($this->certificate_path) . '/public.pem',
+            error_log("✅ Found file at: $path");/cert.pem',
             $cert_content = file_get_contents($path);
             
             if (empty($cert_content)) {
+                continue;le_paths as $path) {
+            }f (!file_exists($path)) {
                 continue;
-            }
-            
             // Try to extract certificate data between BEGIN/END markers
             if (preg_match('/-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----/s', $cert_content, $matches)) {
                 $cert_data = str_replace(["\r", "\n", " "], '', $matches[1]);
                 error_log("✅ Successfully extracted certificate data from: $path");
                 return $cert_data;
+            }f (empty($cert_content)) {
+        }       continue;
             }
-        }
-        
         // If we get here, certificate data wasn't found
         error_log("❌ No valid certificate data found in any of the expected locations");
-        return new WP_Error('cert_not_found', 'No valid certificate data found');
-    }
-
-    /**
+        return new WP_Error('cert_not_found', 'No valid certificate data found');-----/s', $cert_content, $matches)) {
+    }           $cert_data = str_replace(["\r", "\n", " "], '', $matches[1]);
+                error_log("✅ Successfully extracted certificate data from: $path");
+    /**         return $cert_data;
      * Get vehicle data by registration number
-     * 
+     *  }
      * @param string $registration_number Vehicle registration number
-     * @return array|WP_Error Vehicle data or error
-     */
-    public function get_vehicle_by_registration($registration_number) {
+     * @return array|WP_Error Vehicle data or errorfound
+     */ error_log("❌ No valid certificate data found in any of the expected locations");
+    public function get_vehicle_by_registration($registration_number) {a found');
         // Sanitize input
         $registration_number = strtoupper(trim($registration_number));
         
         error_log("🔍 Searching for vehicle with registration number: $registration_number");
         
-        // Validate format (basic validation)
+        // Validate format (basic validation)icle registration number
         if (!preg_match('/^[A-Z0-9]{1,8}$/', $registration_number)) {
             error_log("❌ Invalid registration number format: $registration_number");
             return new WP_Error('invalid_reg', 'Invalid registration number format');
-        }
-        
+        }/ Sanitize input
+        $registration_number = strtoupper(trim($registration_number));
         // Check cache first (only for vehicle data, not tokens)
-        $cache_key = 'vehicle_data_' . $registration_number;
+        $cache_key = 'vehicle_data_' . $registration_number;n number: $registration_number");
         $cached_data = SVV_API_Cache::get($cache_key);
+        if ($cached_data !== false) {idation)
+            error_log("🔄 Using cached data for: $registration_number");
+            return $cached_data; registration number format: $registration_number");
+        }   return new WP_Error('invalid_reg', 'Invalid registration number format');
+        }
+        // Force new token for each API call
+        error_log("🔑 Forcing new token generation");not tokens)
+        $cache_key = 'vehicle_data_' . $registration_number;
+        $token = $this->get_access_token(true);e_key);
         if ($cached_data !== false) {
             error_log("🔄 Using cached data for: $registration_number");
-            return $cached_data;
-        }
+            error_log("❌ Failed to get fresh access token for vehicle lookup");
+            return $token;
         
         // Force new token for each API call
-        error_log("🔑 Forcing new token generation");
+        // Log the complete token in debug modeion");
         SVV_API_Cache::delete($this->token_cache_key);
         $token = $this->get_access_token(true);
         
-        if (is_wp_error($token)) {
+            error_log("🔑 Fresh token being used (first 20 chars): " . substr($token, 0, 20));
             error_log("❌ Failed to get fresh access token for vehicle lookup");
             return $token;
-        }
-        
-        // Log the complete token in debug mode
-        if ($this->debug_mode) {
-            error_log("🔑 Fresh token being used: " . $token);
-        } else {
+        // Call SVV API with correct format
+        $endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke';
+        $request_body = [te token in debug mode
+            [this->debug_mode) {
+                'kjennemerke' => $registration_number $token);
+            ]e {
             error_log("🔑 Fresh token being used (first 20 chars): " . substr($token, 0, 20));
         }
         
@@ -604,107 +613,107 @@ class SVV_API_Integration {
             $payload = json_decode($decoded, true);
             if (json_last_error() !== JSON_ERROR_NONE) {
                 return ['error' => 'Invalid JSON in payload: ' . json_last_error_msg()];
-            }
+            } expected values
             
-            return $payload;
+            return $payload;d token details
         } catch (Exception $e) {
             return ['error' => 'Could not decode token: ' . $e->getMessage()];
-        }
+        }token_details) {
     }
-
-    /**
-     * Base64-url encoding function
-     * 
-     * @param string $data Data to encode
-     * @return string Base64-url encoded string
-     */
-    private function base64url_encode($data) {
+       'audience_check' => [
+    /**                'expected' => ['https://www.utv.vegvesen.no', 'https://www.vegvesen.no'],
+     * Base64-url encoding function         'actual' => $token_details['aud'] ?? null,
+     * ' => false
+     * @param string $data Data to encode     ],
+     * @return string Base64-url encoded string=> [
+     */         'expected' => 'svv:kjoretoy/kjoretoyopplysninger',
+    private function base64url_encode($data) {ails['scope'] ?? null,
         return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
     }
 
     /**
      * Generate UUID v4
      * 
-     * @return string UUID
-     */
-    private function generate_uuid() {
-        return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+     * @return string UUID  ],
+     */       'expiration_check' => [
+    private function generate_uuid() {            'expected' => 'Must be in the future',
+        return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',         'actual' => $token_details['exp'] ?? null,
             mt_rand(0, 0xffff), mt_rand(0, 0xffff),   // First two random 16-bit segments
-            mt_rand(0, 0xffff),                       // Third random 16-bit segment
+            mt_rand(0, 0xffff),                       // Third random 16-bit segment     ],
             mt_rand(0, 0x0fff) | 0x4000,              // Fourth segment with version 4 bit set
-            mt_rand(0, 0x3fff) | 0x8000,              // Fifth segment with variant bit set
-            mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)  // Last three random segments
-        );
+            mt_rand(0, 0x3fff) | 0x8000,              // Fifth segment with variant bit set         'expected' => ['https://www.utv.vegvesen.no', 'https://www.vegvesen.no'],
+            mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)  // Last three random segmentsesource'] ?? null,
+        );tus' => false
     }
     
     /**
-     * Test Maskinporten token generation without making API calls
-     * 
-     * @return array Test results with status and messages
+     * Test Maskinporten token generation without making API calls// Perform checks
+     * _check']['status'] = 
+     * @return array Test results with status and messageseck']['actual'], $compliance_checks['audience_check']['expected']);
      */
-    public function test_token_generation() {
-        $results = [
+    public function test_token_generation() {check']['status'] = 
+        $results = [eck']['expected'];
             'success' => false,
-            'messages' => [],
-        ];
+            'messages' => [],issuer_check']['status'] = 
+        ];   in_array($compliance_checks['issuer_check']['actual'], $compliance_checks['issuer_check']['expected']);
         
-        // Step 1: Check certificate
-        if (!file_exists($this->certificate_path)) {
+        // Step 1: Check certificatetion_check']['status'] = 
+        if (!file_exists($this->certificate_path)) {expiration_check']['actual'] > time();
             $results['messages'][] = [
-                'type' => 'error',
-                'message' => 'Certificate file not found at: ' . $this->certificate_path
+                'type' => 'error',ompliance_checks['resource_check']['status'] = 
+                'message' => 'Certificate file not found at: ' . $this->certificate_path    in_array($compliance_checks['resource_check']['actual'], $compliance_checks['resource_check']['expected']);
             ];
             return $results;
-        }
-        
-        $results['messages'][] = [
+        }Compliance Check:");
+         $check => $details) {
+        $results['messages'][] = [atus'] ? '✅ PASS' : '❌ FAIL';
             'type' => 'success',
-            'message' => 'Certificate file found'
-        ];
+            'message' => 'Certificate file found'ror_log("  Expected: " . json_encode($details['expected']));
+        ];ual: " . json_encode($details['actual']));
         
         // Step 2: Try to load private key
-        $private_key = file_get_contents($this->certificate_path);
-        if (!$private_key) {
+        $private_key = file_get_contents($this->certificate_path);iance
+        if (!$private_key) {ray_reduce($compliance_checks, function($carry, $item) {
             $results['messages'][] = [
-                'type' => 'error',
+                'type' => 'error', true);
                 'message' => 'Could not read private key from certificate file'
             ];
-            return $results;
-        }
+            return $results;mpliance,
+        }ance_checks
         
         $results['messages'][] = [
             'type' => 'success',
             'message' => 'Private key loaded from certificate file'
-        ];
+        ];unction
         
-        // Step 3: Try to create JWT
-        $jwt = $this->create_jwt_grant();
+        // Step 3: Try to create JWTparam string $data Data to encode
+        $jwt = $this->create_jwt_grant();ncoded string
         if (is_wp_error($jwt)) {
             $results['messages'][] = [
-                'type' => 'error',
-                'message' => 'JWT creation failed: ' . $jwt->get_error_message()
-            ];
+                'type' => 'error',arts = explode('.', $token);
+                'message' => 'JWT creation failed: ' . $jwt->get_error_message()if (count($parts) !== 3) {
+            ];alid JWT format'];
             return $results;
         }
         
-        $results['messages'][] = [
+        $results['messages'][] = [load part (index 1)
             'type' => 'success',
-            'message' => 'JWT grant created successfully'
-        ];
-        
-        // Step 4: Try to get token
-        $token = $this->get_access_token();
-        if (is_wp_error($token)) {
+            'message' => 'JWT grant created successfully'ase64_url_decoded = strtr($base64_payload, '-_', '+/');
+        ];d($base64_url_decoded, strlen($base64_url_decoded) % 4, '=', STR_PAD_RIGHT);
+           $decoded = base64_decode($padded);
+        // Step 4: Try to get token    
+        $token = $this->get_access_token(); {
+        if (is_wp_error($token)) { 'Invalid base64 encoding'];
             $results['messages'][] = [
                 'type' => 'error',
-                'message' => 'Token request failed: ' . $token->get_error_message()
-            ];
-            return $results;
-        }
-        
-        $results['success'] = true;
+                'message' => 'Token request failed: ' . $token->get_error_message()  $payload = json_decode($decoded, true);
+            ];    if (json_last_error() !== JSON_ERROR_NONE) {
+            return $results;'error' => 'Invalid JSON in payload: ' . json_last_error_msg()];
+        }       }
+                
+        $results['success'] = true;     return $payload;
         $results['messages'][] = [
-            'type' => 'success',
+            'type' => 'success',     return ['error' => 'Could not decode token: ' . $e->getMessage()];
             'message' => 'Successfully obtained access token from Maskinporten'
         ];
         
@@ -713,87 +722,87 @@ class SVV_API_Integration {
     
     /**
      * Prepare vehicle data for display
-     * 
-     * @param array $raw_data Raw data from API
-     * @return array Processed data
-     */
-    private function prepare_vehicle_data($raw_data) {
-        // Log the raw data structure for debugging if debug mode is enabled
-        if ($this->debug_mode) {
+     * ate function generate_uuid() {
+     * @param array $raw_data Raw data from APIx-%04x-%04x%04x%04x',
+     * @return array Processed datand(0, 0xffff), mt_rand(0, 0xffff),   // First two random 16-bit segments
+     */ffff),                       // Third random 16-bit segment
+    private function prepare_vehicle_data($raw_data) {4000,              // Fourth segment with version 4 bit set
+        // Log the raw data structure for debugging if debug mode is enabled | 0x8000,              // Fifth segment with variant bit set
+        if ($this->debug_mode) {, mt_rand(0, 0xffff), mt_rand(0, 0xffff)  // Last three random segments
             error_log("🔍 Raw data structure: " . json_encode(array_keys($raw_data)));
         }
         
         // Initialize with default values
-        $data = [
+        $data = [skinporten token generation without making API calls
             'teaser' => [
-                'reg_number' => '',
+                'reg_number' => '',lts with status and messages
                 'brand' => '',
-                'model' => '',
-                'first_registration' => '',
-                'vehicle_type' => '',
-                'engine' => [],
+                'model' => '',_generation() {
+                'first_registration' => '',lts = [
+                'vehicle_type' => '',  'success' => false,
+                'engine' => [],    'messages' => [],
                 'last_inspection' => [],
             ],
             'protected' => [
-                'owner' => [],
-                'registration_history' => [],
+                'owner' => [],f (!file_exists($this->certificate_path)) {
+                'registration_history' => [],    $results['messages'][] = [
                 'status' => []
             ]
-        ];
-        
+        ];   ];
+            return $results;
         // Extract data if available
         if (isset($raw_data['kjoretoyId']['kjennemerke'])) {
-            $data['teaser']['reg_number'] = $raw_data['kjoretoyId']['kjennemerke'];
-        }
+            $data['teaser']['reg_number'] = $raw_data['kjoretoyId']['kjennemerke'];results['messages'][] = [
+        }    'type' => 'success',
         
         if (isset($raw_data['godkjenning']['tekniskGodkjenning']['fabrikat'])) {
             $data['teaser']['brand'] = $raw_data['godkjenning']['tekniskGodkjenning']['fabrikat'];
-        }
+        }// Step 2: Try to load private key
         
         if (isset($raw_data['godkjenning']['tekniskGodkjenning']['handelsbetegnelse'])) {
-            $data['teaser']['model'] = $raw_data['godkjenning']['tekniskGodkjenning']['handelsbetegnelse'];
-        }
-        
+            $data['teaser']['model'] = $raw_data['godkjenning']['tekniskGodkjenning']['handelsbetegnelse'];   $results['messages'][] = [
+        }        'type' => 'error',
+        e'
         if (isset($raw_data['forstegangsregistrering']['registrertForstegangNorgeDato'])) {
-            $data['teaser']['first_registration'] = $raw_data['forstegangsregistrering']['registrertForstegangNorgeDato'];
-        }
+            $data['teaser']['first_registration'] = $raw_data['forstegangsregistrering']['registrertForstegangNorgeDato'];   return $results;
+        }}
         
         if (isset($raw_data['godkjenning']['tekniskGodkjenning']['kjoretoyklasse']['kodeNavn'])) {
-            $data['teaser']['vehicle_type'] = $raw_data['godkjenning']['tekniskGodkjenning']['kjoretoyklasse']['kodeNavn'];
-        }
+            $data['teaser']['vehicle_type'] = $raw_data['godkjenning']['tekniskGodkjenning']['kjoretoyklasse']['kodeNavn'];   'type' => 'success',
+        }    'message' => 'Private key loaded from certificate file'
         
         if (isset($raw_data['godkjenning']['tekniskGodkjenning']['motor'])) {
-            $data['teaser']['engine'] = $this->process_engine_data($raw_data['godkjenning']['tekniskGodkjenning']['motor']);
-        }
+            $data['teaser']['engine'] = $this->process_engine_data($raw_data['godkjenning']['tekniskGodkjenning']['motor']);/ Step 3: Try to create JWT
+        }$jwt = $this->create_jwt_grant();
         
         if (isset($raw_data['periodiskKjoretoyKontroll'])) {
-            $data['teaser']['last_inspection'] = $this->process_inspection_data($raw_data['periodiskKjoretoyKontroll']);
-        }
+            $data['teaser']['last_inspection'] = $this->process_inspection_data($raw_data['periodiskKjoretoyKontroll']);       'type' => 'error',
+        }        'message' => 'JWT creation failed: ' . $jwt->get_error_message()
         
         if (isset($raw_data['registrering']['registrertEier'])) {
             $data['protected']['owner'] = $this->process_owner_data($raw_data['registrering']['registrertEier']);
         }
         
         if (isset($raw_data['registrering']['historikk'])) {
-            $data['protected']['registration_history'] = $raw_data['registrering']['historikk'];
-        }
+            $data['protected']['registration_history'] = $raw_data['registrering']['historikk'];d successfully'
+        };
         
-        if (isset($raw_data['registrering']['registreringsstatus'])) {
-            $data['protected']['status'] = $raw_data['registreringsstatus'];
-        }
-        
-        // Include raw data for debugging if needed
-        if (defined('WP_DEBUG') && WP_DEBUG) {
+        if (isset($raw_data['registrering']['registreringsstatus'])) {y to get token
+            $data['protected']['status'] = $raw_data['registreringsstatus'];   $token = $this->get_access_token();
+        }    if (is_wp_error($token)) {
+             $results['messages'][] = [
+        // Include raw data for debugging if needed'error',
+        if (defined('WP_DEBUG') && WP_DEBUG) {         'message' => 'Token request failed: ' . $token->get_error_message()
             $data['raw_data'] = $raw_data;
-        }
+        }rn $results;
         
         return $data;
     }
     
-    /**
-     * Process engine data
-     */
-    private function process_engine_data($engine_data) {
+    /**  'type' => 'success',
+     * Process engine data       'message' => 'Successfully obtained access token from Maskinporten'
+     */    ];
+    private function process_engine_data($engine_data) { 
         return [
             'fuel_type' => isset($engine_data['drivstoff']['kodeNavn']) ? 
                 $engine_data['drivstoff']['kodeNavn'] : '',
@@ -803,17 +812,17 @@ class SVV_API_Integration {
     }
     
     /**
-     * Process inspection data
-     */
-    private function process_inspection_data($inspection_data) {
-        return [
-            'last_date' => isset($inspection_data['sistGodkjent']) ? 
+     * Process inspection datarivate function prepare_vehicle_data($raw_data) {
+     */    // Log the raw data structure for debugging if debug mode is enabled
+    private function process_inspection_data($inspection_data) { if ($this->debug_mode) {
+        return [ Raw data structure: " . json_encode(array_keys($raw_data)));
+            'last_date' => isset($inspection_data['sistGodkjent']) ?  }
                 $inspection_data['sistGodkjent'] : '',
             'next_date' => isset($inspection_data['kontrollfrist']) ? 
                 $inspection_data['kontrollfrist'] : '',
-        ];
-    }
-    
+        ];    'teaser' => [
+    }er' => '',
+    nd' => '',
     /**
      * Process owner data
      */
@@ -821,109 +830,109 @@ class SVV_API_Integration {
         $is_person = isset($owner_data['person']);
         $is_organization = isset($owner_data['eier']);
         
-        if ($is_person) {
-            return [
+        if ($is_person) {er' => [],
+            return [ [],
                 'type' => 'person',
                 'name' => isset($owner_data['person']['navn']) ? 
                     $owner_data['person']['navn'] : '',
                 'address' => isset($owner_data['person']['adresse']) ? 
                     $this->format_address($owner_data['person']['adresse']) : '',
             ];
-        } else if ($is_organization) {
+        } else if ($is_organization) {ata['teaser']['reg_number'] = $raw_data['kjoretoyId']['kjennemerke'];
             return [
                 'type' => 'organization',
-                'name' => isset($owner_data['eier']['navn']) ? 
-                    $owner_data['eier']['navn'] : '',
-                'org_number' => isset($owner_data['eier']['organisasjonsnummer']) ? 
-                    $owner_data['eier']['organisasjonsnummer'] : '',
-                'address' => isset($owner_data['eier']['adresse']) ? 
-                    $this->format_address($owner_data['eier']['adresse']) : '',
+                'name' => isset($owner_data['eier']['navn']) ? ing']['tekniskGodkjenning']['fabrikat'])) {
+                    $owner_data['eier']['navn'] : '',       $data['teaser']['brand'] = $raw_data['godkjenning']['tekniskGodkjenning']['fabrikat'];
+                'org_number' => isset($owner_data['eier']['organisasjonsnummer']) ?     }
+                    $owner_data['eier']['organisasjonsnummer'] : '', 
+                'address' => isset($owner_data['eier']['adresse']) ? a['godkjenning']['tekniskGodkjenning']['handelsbetegnelse'])) {
+                    $this->format_address($owner_data['eier']['adresse']) : '',     $data['teaser']['model'] = $raw_data['godkjenning']['tekniskGodkjenning']['handelsbetegnelse'];
             ];
         }
-        
-        return ['type' => 'unknown'];
+        if (isset($raw_data['forstegangsregistrering']['registrertForstegangNorgeDato'])) {
+        return ['type' => 'unknown'];strertForstegangNorgeDato'];
     }
     
-    /**
-     * Format address data
+    /**if (isset($raw_data['godkjenning']['tekniskGodkjenning']['kjoretoyklasse']['kodeNavn'])) {
+     * Format address datanning']['kjoretoyklasse']['kodeNavn'];
      */
     private function format_address($address_data) {
-        $address = [];
-        
-        if (isset($address_data['adresselinje1']) && !empty($address_data['adresselinje1'])) {
-            $address[] = $address_data['adresselinje1'];
-        }
-        
-        if (isset($address_data['postnummer']) && isset($address_data['poststed'])) {
+        $address = [];if (isset($raw_data['godkjenning']['tekniskGodkjenning']['motor'])) {
+         $this->process_engine_data($raw_data['godkjenning']['tekniskGodkjenning']['motor']);
+        if (isset($address_data['adresselinje1']) && !empty($address_data['adresselinje1'])) {   }
+            $address[] = $address_data['adresselinje1'];        
+        } if (isset($raw_data['periodiskKjoretoyKontroll'])) {
+        cess_inspection_data($raw_data['periodiskKjoretoyKontroll']);
+        if (isset($address_data['postnummer']) && isset($address_data['poststed'])) { }
             $address[] = $address_data['postnummer'] . ' ' . $address_data['poststed'];
-        }
-        
+        } if (isset($raw_data['registrering']['registrertEier'])) {
+        his->process_owner_data($raw_data['registrering']['registrertEier']);
         return implode(', ', $address);
     }
 
-    /**
-     * Run comprehensive diagnostics on the API integration
+    /**_data['registrering']['historikk'];
+     * Run comprehensive diagnostics on the API integration}
      * 
-     * @return array Diagnostic results
-     */
+     * @return array Diagnostic resultsatus'])) {
+     */gistreringsstatus'];
     public function run_full_diagnostics() {
         error_log("🕵️ Starting Full Diagnostic Scan");
-        
-        $authentication_debug = $this->comprehensive_authentication_debug();
+         Include raw data for debugging if needed
+        $authentication_debug = $this->comprehensive_authentication_debug();if (defined('WP_DEBUG') && WP_DEBUG) {
         $endpoint_diagnosis = $this->diagnose_api_endpoint();
         
         $diagnostic_report = [
             'authentication_debug' => $authentication_debug,
             'endpoint_diagnosis' => $endpoint_diagnosis,
-            'timestamp' => current_time('mysql'),
+            'timestamp' => current_time('mysql'),    
             'environment' => defined('SVV_API_ENVIRONMENT') ? SVV_API_ENVIRONMENT : 'prod'
         ];
         
-        error_log("🔍 Full Diagnostic Report:");
-        error_log(print_r($diagnostic_report, true));
-        
+        error_log("🔍 Full Diagnostic Report:");e_data($engine_data) {
+        error_log(print_r($diagnostic_report, true)); return [
+        'kodeNavn']) ? 
         return $diagnostic_report;
-    }
-
+    }    'displacement' => isset($engine_data['slagvolum']) ? $engine_data['slagvolum'] : '',
+=> isset($engine_data['motorytelse']) ? $engine_data['motorytelse'] : '',
     /**
      * Run comprehensive authentication debugging
      * 
      * @return array Debug results
-     */
+     */ion data
     private function comprehensive_authentication_debug() {
-        error_log("🔐 Starting Authentication Diagnostics");
-        
-        $results = [
-            'certificate' => [
-                'status' => 'unknown',
-                'details' => []
+        error_log("🔐 Starting Authentication Diagnostics");spection_data($inspection_data) {
+         [
+        $results = [=> isset($inspection_data['sistGodkjent']) ? 
+            'certificate' => [Godkjent'] : '',
+                'status' => 'unknown',t($inspection_data['kontrollfrist']) ? 
+                'details' => []   $inspection_data['kontrollfrist'] : '',
             ],
-            'jwt' => [
+            'jwt' => [    }
                 'status' => 'unknown',
                 'details' => []
             ],
             'token' => [
-                'status' => 'unknown',
-                'details' => []
+                'status' => 'unknown',unction process_owner_data($owner_data) {
+                'details' => []person = isset($owner_data['person']);
             ]
         ];
 
         // Check certificate
-        try {
+        try {,
             if (!file_exists($this->certificate_path)) {
                 throw new Exception("Certificate file not found");
-            }
-            
+            }se']) ? 
+             '',
             $cert_info = openssl_x509_parse(file_get_contents($this->certificate_path));
-            if ($cert_info) {
-                $results['certificate'] = [
-                    'status' => 'ok',
-                    'details' => [
-                        'valid_from' => date('Y-m-d H:i:s', $cert_info['validFrom_time_t']),
-                        'valid_to' => date('Y-m-d H:i:s', $cert_info['validTo_time_t']),
-                        'issuer' => $cert_info['issuer']['CN'],
-                        'is_expired' => time() > $cert_info['validTo_time_t']
-                    ]
+            if ($cert_info) {($is_organization) {
+                $results['certificate'] = [eturn [
+                    'status' => 'ok',ization',
+                    'details' => [data['eier']['navn']) ? 
+                        'valid_from' => date('Y-m-d H:i:s', $cert_info['validFrom_time_t']),r']['navn'] : '',
+                        'valid_to' => date('Y-m-d H:i:s', $cert_info['validTo_time_t']),'organisasjonsnummer']) ? 
+                        'issuer' => $cert_info['issuer']['CN'],      $owner_data['eier']['organisasjonsnummer'] : '',
+                        'is_expired' => time() > $cert_info['validTo_time_t']       'address' => isset($owner_data['eier']['adresse']) ? 
+                    ]                    $this->format_address($owner_data['eier']['adresse']) : '',
                 ];
             }
         } catch (Exception $e) {
@@ -933,91 +942,186 @@ class SVV_API_Integration {
             ];
         }
 
-        // Test JWT creation
-        try {
+        // Test JWT creationformat_address($address_data) {
+        try { [];
             $jwt = $this->create_jwt_grant();
-            if (!is_wp_error($jwt)) {
-                $results['jwt'] = [
+            if (!is_wp_error($jwt)) {dress_data['adresselinje1'])) {
+                $results['jwt'] = [address[] = $address_data['adresselinje1'];
                     'status' => 'ok',
                     'details' => [
-                        'length' => strlen($jwt),
-                        'parts' => count(explode('.', $jwt))
+                        'length' => strlen($jwt),tnummer']) && isset($address_data['poststed'])) {
+                        'parts' => count(explode('.', $jwt)) . $address_data['poststed'];
                     ]
                 ];
-            } else {
+            } else {        return implode(', ', $address);
                 throw new Exception($jwt->get_error_message());
             }
         } catch (Exception $e) {
-            $results['jwt'] = [
+            $results['jwt'] = [ the API integration
                 'status' => 'error',
-                'details' => ['error' => $e->getMessage()]
+                'details' => ['error' => $e->getMessage()]ts
             ];
-        }
+        }ostics() {
 
         // Test token acquisition
-        try {
+        try {g();
             $token = $this->get_access_token();
             if (!is_wp_error($token)) {
-                $token_details = $this->decode_jwt_token($token);
-                $results['token'] = [
+                $token_details = $this->decode_jwt_token($token);c_report = [
+                $results['token'] = [ication_debug' => $authentication_debug,
                     'status' => 'ok',
-                    'details' => [
-                        'expires' => isset($token_details['exp']) ? 
+                    'details' => [timestamp' => current_time('mysql'),
+                        'expires' => isset($token_details['exp']) ? ined('SVV_API_ENVIRONMENT') ? SVV_API_ENVIRONMENT : 'prod'
                             date('Y-m-d H:i:s', $token_details['exp']) : 'unknown',
                         'scope' => $token_details['scope'] ?? 'unknown',
                         'cached' => SVV_API_Cache::get($this->token_cache_key) !== false
-                    ]
+                    ]log(print_r($diagnostic_report, true));
                 ];
-            } else {
+            } else {        return $diagnostic_report;
                 throw new Exception($token->get_error_message());
             }
-        } catch (Exception $e) {
-            $results['token'] = [
+        } catch (Exception $e) {    /**
+            $results['token'] = [Run comprehensive authentication debugging
                 'status' => 'error',
-                'details' => ['error' => $e->getMessage()]
+                'details' => ['error' => $e->getMessage()]@return array Debug results
             ];
+        }vate function comprehensive_authentication_debug() {
+Diagnostics");
+        return $results;
+    }$results = [
+cate' => [
+    /**known',
+     * Diagnose API endpoint connectivity and behavior
+     * 
+     * @return array Diagnostic resultswt' => [
+     */',
+    private function diagnose_api_endpoint() {[]
+        error_log("🔌 Starting API Endpoint Diagnostics");
+          'token' => [
+        $results = [                'status' => 'unknown',
+            'connectivity' => [   'details' => []
+                'status' => 'unknown',
+                'details' => []
+            ],
+            'response_time' => null,
+            'ssl_info' => [],
+            'headers' => []if (!file_exists($this->certificate_path)) {
+        ];e file not found");
+
+        try {
+            $start_time = microtime(true);cert_info = openssl_x509_parse(file_get_contents($this->certificate_path));
+                        if ($cert_info) {
+            // Test with a known registration number
+            $test_reg = 'CU11262';> 'ok',
+            $endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke';
+             H:i:s', $cert_info['validFrom_time_t']),
+            $token = $this->get_access_token(); $cert_info['validTo_time_t']),
+            if (is_wp_error($token)) {      'issuer' => $cert_info['issuer']['CN'],
+                throw new Exception($token->get_error_message());ime_t']
+            }
+
+            $response = wp_remote_post($endpoint, [
+                'headers' => [        } catch (Exception $e) {
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',    'status' => 'error',
+                    'Authorization' => 'Bearer ' . $token$e->getMessage()]
+                ],
+                'body' => json_encode([['kjennemerke' => $test_reg]]),
+                'timeout' => 15,
+                'sslverify' => true
+            ]);
+
+            $end_time = microtime(true);if (!is_wp_error($jwt)) {
+            
+            if (is_wp_error($response)) {ok',
+                throw new Exception($response->get_error_message());=> [
+            }
+lode('.', $jwt))
+            // Analyze response
+            $status_code = wp_remote_retrieve_response_code($response);;
+            $headers = wp_remote_retrieve_headers($response);else {
+                throw new Exception($jwt->get_error_message());
+            $results['connectivity'] = [
+                'status' => 'ok',
+                'details' => [$results['jwt'] = [
+                    'status_code' => $status_code,',
+                    'endpoint' => $endpoint,->getMessage()]
+                    'curl_info' => $response['http_response']->get_info() ?? []
+                ]
+            ];
+            t token acquisition
+            $results['response_time'] = round(($end_time - $start_time) * 1000, 2); // in ms{
+            $results['headers'] = $headers;ss_token();
+            
+            // Get SSL information
+            $ssl_info = openssl_x509_parse(  $results['token'] = [
+                openssl_x509_read(                    'status' => 'ok',
+                    file_get_contents(ABSPATH . WPINC . '/certificates/ca-bundle.crt') [
+                )et($token_details['exp']) ? 
+            );m-d H:i:s', $token_details['exp']) : 'unknown',
+             ?? 'unknown',
+            $results['ssl_info'] = [          'cached' => SVV_API_Cache::get($this->token_cache_key) !== false
+                'certificate_exists' => !empty($ssl_info),           ]
+                'valid_until' => $ssl_info ? date('Y-m-d H:i:s', $ssl_info['validTo_time_t']) : null                ];
+            ];
+           throw new Exception($token->get_error_message());
+        } catch (Exception $e) {            }
+            $results['connectivity'] = [ } catch (Exception $e) {
+                'status' => 'error',
+                'details' => ['error' => $e->getMessage()]         'status' => 'error',
+            ];tMessage()]
         }
 
         return $results;
     }
 
     /**
-     * Diagnose API endpoint connectivity and behavior
-     * 
-     * @return array Diagnostic results
+     * Log HTTP requests and responses for debugging
+     * ity and behavior
+     * @param mixed $response The HTTP response
+     * @param string $context The HTTP context
+     * @param string $transport The HTTP transport used
+     * @param array $request_args The HTTP request argumentsate function diagnose_api_endpoint() {
+     * @param string $url The request URLics");
+     * @return mixed The unmodified response
      */
-    private function diagnose_api_endpoint() {
-        error_log("🔌 Starting API Endpoint Diagnostics");
+    public function log_http_request($response, $context, $transport, $request_args, $url) {
+        error_log("🌐 HTTP Request:");       'status' => 'unknown',
+        error_log("URL: $url");        'details' => []
+        error_log("Context: $context");
+        error_log("Transport: $transport");    'response_time' => null,
         
-        $results = [
-            'connectivity' => [
-                'status' => 'unknown',
-                'details' => []
-            ],
-            'response_time' => null,
-            'ssl_info' => [],
-            'headers' => []
-        ];
+        // Redact sensitive information from headers
+        $safe_headers = isset($request_args['headers']) ? $request_args['headers'] : [];
+        if (isset($safe_headers['Authorization'])) {
+            $safe_headers['Authorization'] = 'Bearer [REDACTED]';ry {
+        }    $start_time = microtime(true);
+        
+        error_log("Request Headers: " . print_r($safe_headers, true));stration number
+        
+        // Log request body if present, but redact sensitive datapoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke';
+        if (isset($request_args['body'])) {
+            $body = is_string($request_args['body']) ? json_decode($request_args['body'], true) : $request_args['body'];
+            error_log("Request Body: " . print_r($body, true));
+        }    throw new Exception($token->get_error_message());
+        
+        // Log response details
+        if (is_wp_error($response)) {
+            error_log("Response Error: " . $response->get_error_message());       'headers' => [
+        } else {            'Content-Type' => 'application/json',
+            $status_code = wp_remote_retrieve_response_code($response);pt' => 'application/json',
+            $headers = wp_remote_retrieve_headers($response);               'Authorization' => 'Bearer ' . $token
+            $body = wp_remote_retrieve_body($response);               ],
 
-        try {
-            $start_time = microtime(true);
-            
-            // Test with a known registration number
-            $test_reg = 'CU11262';
-            $endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke';
-            
-            $token = $this->get_access_token();
-            if (is_wp_error($token)) {
-                throw new Exception($token->get_error_message());
-            }
 
-            $response = wp_remote_post($endpoint, [
-                'headers' => [
-                    'Content-Type' => 'application/json',
-                    'Accept' => 'application/json',
-                    'Authorization' => 'Bearer ' . $token
-                ],
-                'body' => json_encode([['kjennemerke' => $test_reg]]),
+
+
+
+
+
+
+
+}    }        return $response;                }            error_log("Response Body: " . substr($body, 0, 1000) . (strlen($body) > 1000 ? '...[truncated]' : ''));            error_log("Response Headers: " . print_r($headers, true));            error_log("Response Status: $status_code");                            'body' => json_encode([['kjennemerke' => $test_reg]]),
                 'timeout' => 15,
                 'sslverify' => true
             ]);
@@ -1057,58 +1161,58 @@ class SVV_API_Integration {
             ];
 
         } catch (Exception $e) {
-            $results['connectivity'] = [
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}    }        return $response;                }            error_log("Response Body: " . substr($body, 0, 1000) . (strlen($body) > 1000 ? '...[truncated]' : ''));            error_log("Response Headers: " . print_r($headers, true));            error_log("Response Status: $status_code");                        $body = wp_remote_retrieve_body($response);            $headers = wp_remote_retrieve_headers($response);            $status_code = wp_remote_retrieve_response_code($response);        } else {            error_log("Response Error: " . $response->get_error_message());        if (is_wp_error($response)) {        // Log response details                }            error_log("Request Body: " . print_r($body, true));            $body = is_string($request_args['body']) ? json_decode($request_args['body'], true) : $request_args['body'];        if (isset($request_args['body'])) {        // Log request body if present, but redact sensitive data                error_log("Request Headers: " . print_r($safe_headers, true));                }            $safe_headers['Authorization'] = 'Bearer [REDACTED]';        if (isset($safe_headers['Authorization'])) {        $safe_headers = isset($request_args['headers']) ? $request_args['headers'] : [];        // Redact sensitive information from headers                error_log("Transport: $transport");        error_log("Context: $context");        error_log("URL: $url");        error_log("🌐 HTTP Request:");    public function log_http_request($response, $context, $transport, $request_args, $url) {     */     * @return mixed The unmodified response
+
+
+     * @param string $url The request URL     * @param array $request_args The HTTP request arguments
+
+
+     * @param string $transport The HTTP transport used     * @param string $context The HTTP context
+     * @param mixed $response The HTTP response     *      * Log HTTP requests and responses for debugging    /**    }        return $results;        }            ];                'details' => ['error' => $e->getMessage()]            $results['connectivity'] = [
                 'status' => 'error',
-                'details' => ['error' => $e->getMessage()]
-            ];
-        }
-
-        return $results;
-    }
-
-    /**
-     * Log HTTP requests and responses for debugging
-     * 
-     * @param mixed $response The HTTP response
-     * @param string $context The HTTP context
-     * @param string $transport The HTTP transport used
-     * @param array $request_args The HTTP request arguments
-     * @param string $url The request URL
-     * @return mixed The unmodified response
-     */
-    public function log_http_request($response, $context, $transport, $request_args, $url) {
-        error_log("🌐 HTTP Request:");
-        error_log("URL: $url");
-        error_log("Context: $context");
-        error_log("Transport: $transport");
-        
-        // Redact sensitive information from headers
-        $safe_headers = isset($request_args['headers']) ? $request_args['headers'] : [];
-        if (isset($safe_headers['Authorization'])) {
-            $safe_headers['Authorization'] = 'Bearer [REDACTED]';
-        }
-        
-        error_log("Request Headers: " . print_r($safe_headers, true));
-        
-        // Log request body if present, but redact sensitive data
-        if (isset($request_args['body'])) {
-            $body = is_string($request_args['body']) ? json_decode($request_args['body'], true) : $request_args['body'];
-            error_log("Request Body: " . print_r($body, true));
-        }
-        
-        // Log response details
-        if (is_wp_error($response)) {
-            error_log("Response Error: " . $response->get_error_message());
-        } else {
-            $status_code = wp_remote_retrieve_response_code($response);
-            $headers = wp_remote_retrieve_headers($response);
-            $body = wp_remote_retrieve_body($response);
-            
-            error_log("Response Status: $status_code");
-            error_log("Response Headers: " . print_r($headers, true));
-            error_log("Response Body: " . substr($body, 0, 1000) . (strlen($body) > 1000 ? '...[truncated]' : ''));
-        }
-        
-        return $response;
-    }
-}
