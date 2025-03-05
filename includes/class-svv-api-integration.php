@@ -39,7 +39,7 @@ class SVV_API_Integration {
             $this->svv_api_base_url = 'https://akfell-datautlevering-sisdinky.utv.atlas.vegvesen.no';
         } else {
             $this->maskinporten_token_url = 'https://maskinporten.no/token';
-            $this->svv_api_base_url = 'https://akfell-datautlevering-sisdinky.utv.atlas.vegvesen.no';
+            $this->svv_api_base_url = 'https://akfell-datautlevering-sisdinky.atlas.vegvesen.no';
         }
         
         // Get debug mode from wp-config
