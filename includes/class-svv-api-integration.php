@@ -52,25 +52,37 @@ class SVV_API_Integration {
     /**
      * Get access token from Maskinporten
      * 
+     * @param bool $force_new Force generation of new token, bypassing cache
      * @return string|WP_Error Access token or error
      */
-    public function get_access_token() {
+    public function get_access_token($force_new = false) {
         try {
-            // Check if we have a cached token
-            $cached_token = SVV_API_Cache::get($this->token_cache_key);
-            if ($cached_token !== false) {
-                error_log("🔑 Using cached Maskinporten token");
-                return $cached_token;
+            // Check cache unless forcing new token
+            if (!$force_new) {
+                $cached_token = SVV_API_Cache::get($this->token_cache_key);
+                if ($cached_token !== false) {
+                    // Validate cached token before using
+                    $token_details = $this->decode_jwt_token($cached_token);
+                    if (!empty($token_details) && 
+                        !isset($token_details['error']) && 
+                        isset($token_details['exp']) && 
+                        $token_details['exp'] > time() + 30) { // 30 second buffer
+                        error_log("🔑 Using valid cached Maskinporten token");
+                        return $cached_token;
+                    }
+                    error_log("🔑 Cached token invalid or expiring soon, generating new one");
+                    SVV_API_Cache::delete($this->token_cache_key);
+                }
             }
             
-            error_log("🔑 No cached token found, requesting new one from Maskinporten");
+            error_log("🔑 Requesting new Maskinporten token" . ($force_new ? ' (forced)' : ''));
             
-            // Create JWT grant
+            // Create JWT grant with enhanced error handling
             $jwt = $this->create_jwt_grant();
             if (is_wp_error($jwt)) {
                 throw new Exception('JWT creation failed: ' . $jwt->get_error_message());
             }
-            
+
             $response = wp_remote_post($this->maskinporten_token_url, [
                 'headers' => [
                     'Content-Type' => 'application/x-www-form-urlencoded'
@@ -122,26 +134,47 @@ class SVV_API_Integration {
                 throw new Exception('Invalid token format: ' . ($token_details['error'] ?? 'Unknown error'));
             }
 
-            // Validate required claims
-            $required_claims = ['scope', 'exp', 'aud'];
+            // Comprehensive token validation
+            $validation_errors = [];
+            
+            // Required claims check
+            $required_claims = ['scope', 'exp', 'aud', 'iss', 'iat', 'jti', 'resource'];
             foreach ($required_claims as $claim) {
                 if (!isset($token_details[$claim])) {
-                    throw new Exception("Missing required claim: $claim");
+                    $validation_errors[] = "Missing required claim: $claim";
                 }
             }
 
-            // Validate scope
-            if ($token_details['scope'] !== $this->scope) {
-                throw new Exception("Token scope mismatch. Expected: {$this->scope}, Got: " . $token_details['scope']);
+            // Specific claim validations
+            if (empty($validation_errors)) {
+                // Scope validation
+                if ($token_details['scope'] !== $this->scope) {
+                    $validation_errors[] = "Scope mismatch. Expected: {$this->scope}, Got: {$token_details['scope']}";
+                }
+
+                // Expiration validation with grace period
+                if ($token_details['exp'] <= time() + 30) {
+                    $validation_errors[] = "Token is expired or expiring too soon";
+                }
+
+                // Issuer validation
+                if ($token_details['iss'] !== $this->client_id) {
+                    $validation_errors[] = "Invalid issuer. Expected: {$this->client_id}, Got: {$token_details['iss']}";
+                }
+
+                // Resource validation
+                if (!is_array($token_details['resource'])) {
+                    $validation_errors[] = "Invalid resource claim format";
+                }
             }
 
-            // Validate expiration
-            if ($token_details['exp'] < time()) {
-                throw new Exception('Token is already expired');
+            if (!empty($validation_errors)) {
+                throw new Exception('Token validation failed: ' . implode(', ', $validation_errors));
             }
 
-            // Cache token if all validations pass
-            SVV_API_Cache::set($this->token_cache_key, $token, min($token_details['exp'] - time(), $this->token_cache_expiry));
+            // Cache valid token
+            $cache_duration = min($token_details['exp'] - time() - 30, $this->token_cache_expiry);
+            SVV_API_Cache::set($this->token_cache_key, $token, $cache_duration);
             
             error_log("✅ Successfully obtained and validated Maskinporten token");
             return $token;
@@ -150,10 +183,9 @@ class SVV_API_Integration {
             $error_message = "🚨 Token generation failed: " . $e->getMessage();
             error_log($error_message);
             
-            // Clear token cache on error to prevent reuse of potentially invalid tokens
+            // Clear token cache on error
             SVV_API_Cache::delete($this->token_cache_key);
             
-            // Include original exception message in debug mode
             if ($this->debug_mode) {
                 error_log("🔍 Debug stack trace: " . $e->getTraceAsString());
             }
@@ -180,97 +212,90 @@ class SVV_API_Integration {
      * @return string|WP_Error JWT string or error
      */
     private function create_jwt_grant() {
-        if (!file_exists($this->certificate_path)) {
-            error_log("❌ Certificate file not found at: {$this->certificate_path}");
-            return new WP_Error('cert_not_found', 'Certificate file not found');
+        try {
+            // Validate certificate and get data
+            if (!file_exists($this->certificate_path)) {
+                throw new Exception("Certificate file not found at: {$this->certificate_path}");
+            }
+
+            $private_key = file_get_contents($this->certificate_path);
+            if (!$private_key) {
+                throw new Exception('Could not read private key from PEM file');
+            }
+
+            $cert_data = $this->extract_cert_data($private_key);
+            if (is_wp_error($cert_data)) {
+                throw new Exception($cert_data->get_error_message());
+            }
+
+            // Create standardized JWT header
+            $header = [
+                'alg' => 'RS256',
+                'x5c' => [$cert_data]
+            ];
+
+            // Add optional kid if defined
+            if (defined('SVV_API_KID') && SVV_API_KID) {
+                $header['kid'] = SVV_API_KID;
+            }
+
+            // Set environment-specific values
+            $is_test = defined('SVV_API_ENVIRONMENT') && SVV_API_ENVIRONMENT === 'test';
+            $aud = $is_test ? 'https://test.maskinporten.no/' : 'https://maskinporten.no/';
+            $resource = $is_test ? 'https://www.utv.vegvesen.no' : 'https://www.vegvesen.no';
+
+            // Create standardized JWT payload
+            $now = time();
+            $payload = [
+                'aud' => $aud,
+                'scope' => $this->scope,
+                'iss' => $this->client_id,
+                'exp' => $now + 120,
+                'iat' => $now,
+                'jti' => $this->generate_uuid(),
+                'resource' => [$resource],
+                'client_amr' => 'virksomhetssertifikat',
+                'client_org_no' => $this->org_no
+            ];
+
+            // Base64-url encode header and payload
+            $encoded_header = $this->base64url_encode(json_encode($header));
+            $encoded_payload = $this->base64url_encode(json_encode($payload));
+
+            $signing_input = $encoded_header . '.' . $encoded_payload;
+
+            // Sign JWT with private key
+            $signature = '';
+            $key_resource = openssl_pkey_get_private($private_key, $this->certificate_password);
+            
+            if (!$key_resource) {
+                error_log("❌ Could not load private key - Check password");
+                return new WP_Error('cert_load_failed', 'Could not load private key. Check the password.');
+            }
+            
+            $is_signed = openssl_sign($signing_input, $signature, $key_resource, OPENSSL_ALGO_SHA256);
+
+            if (!$is_signed) {
+                error_log("❌ Failed to sign JWT");
+                return new WP_Error('jwt_signing_failed', 'Failed to sign JWT');
+            }
+
+            // Encode signature and complete JWT
+            $encoded_signature = $this->base64url_encode($signature);
+            $jwt = $encoded_header . '.' . $encoded_payload . '.' . $encoded_signature;
+
+            // Log JWT parts for debugging if debug mode is enabled
+            if ($this->debug_mode) {
+                error_log("🛠 Debug JWT Header: " . json_encode($header));
+                error_log("🛠 Debug JWT Payload: " . json_encode($payload));
+            }
+
+            return $jwt;
+
+        } catch (Exception $e) {
+            error_log("❌ JWT grant creation failed: " . $e->getMessage());
+            return new WP_Error('jwt_creation_failed', $e->getMessage());
         }
-
-        // Load private key from PEM file
-        $private_key = file_get_contents($this->certificate_path);
-        if (!$private_key) {
-            error_log("❌ Could not read private key from PEM file");
-            return new WP_Error('cert_read_error', 'Could not read private key from PEM file');
-        }
-
-        // Get the certificate data to include in x5c header
-        $cert_data = $this->extract_cert_data($private_key);
-        if (is_wp_error($cert_data)) {
-            return $cert_data;
-        }
-
-        // SVV requires virksomhetssertifikat in the x5c header
-        if (empty($cert_data)) {
-            error_log("❌ No certificate data found for x5c header");
-            return new WP_Error('cert_data_not_found', 'No certificate data found for x5c header');
-        }
-
-        // Get kid from wp-config
-        $kid = SVV_API_KID;
-
-        // Create JWT header with x5c and kid - Maskinporten requires this
-        $header = [
-            'alg' => 'RS256',
-            'x5c' => [$cert_data],
-            'kid' => $kid
-        ];
-
-        // Create JWT payload
-        $now = time();
-        $exp = $now + 120; // Max 120 seconds allowed by Maskinporten
-
-        // Set the correct audience and resource based on environment
-        $aud = defined('SVV_API_ENVIRONMENT') && SVV_API_ENVIRONMENT === 'test' 
-            ? 'https://test.maskinporten.no/' 
-            : 'https://maskinporten.no/';
-
-        $resource = defined('SVV_API_ENVIRONMENT') && SVV_API_ENVIRONMENT === 'test' 
-            ? 'https://www.utv.vegvesen.no' 
-            : 'https://www.vegvesen.no';
-
-        $payload = [
-            'aud' => $aud,
-            'scope' => $this->scope,
-            'iss' => $this->client_id,
-            'exp' => $exp,
-            'iat' => $now,
-            'jti' => $this->generate_uuid(),
-            'resource' => [$resource],
-            'client_amr' => 'virksomhetssertifikat'  // Add this line
-        ];
-
-        // Base64-url encode header and payload
-        $encoded_header = $this->base64url_encode(json_encode($header));
-        $encoded_payload = $this->base64url_encode(json_encode($payload));
-
-        $signing_input = $encoded_header . '.' . $encoded_payload;
-
-        // Sign JWT with private key
-        $signature = '';
-        $key_resource = openssl_pkey_get_private($private_key, $this->certificate_password);
-        
-        if (!$key_resource) {
-            error_log("❌ Could not load private key - Check password");
-            return new WP_Error('cert_load_failed', 'Could not load private key. Check the password.');
-        }
-        
-        $is_signed = openssl_sign($signing_input, $signature, $key_resource, OPENSSL_ALGO_SHA256);
-
-        if (!$is_signed) {
-            error_log("❌ Failed to sign JWT");
-            return new WP_Error('jwt_signing_failed', 'Failed to sign JWT');
-        }
-
-        // Encode signature and complete JWT
-        $encoded_signature = $this->base64url_encode($signature);
-        $jwt = $encoded_header . '.' . $encoded_payload . '.' . $encoded_signature;
-
-        // Log JWT parts for debugging if debug mode is enabled
-        if ($this->debug_mode) {
-            error_log("🛠 Debug JWT Header: " . json_encode($header));
-            error_log("🛠 Debug JWT Payload: " . json_encode($payload));
-        }
-
-        return $jwt;
     }
 
     /**
@@ -284,7 +309,9 @@ class SVV_API_Integration {
         $potential_cert_paths = [
             dirname($this->certificate_path) . '/certificate.pem',
             dirname($this->certificate_path) . '/private.pem',
-            $this->certificate_path
+            $this->certificate_path,
+            dirname($this->certificate_path) . '/cert.pem',
+            dirname($this->certificate_path) . '/public.pem'
         ];
 
         error_log("🔍 Searching for certificate in multiple locations...");
