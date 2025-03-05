@@ -42,7 +42,7 @@ class SVV_API_Integration {
         }
         
         // Get debug mode from wp-config
-        $this->debug_mode = defined('SVV_API_DEBUG') ? SVV_API_DEBUG : false;
+        $this->debug_mode = defined('SVV_API_DEBUG') ? SVV_API_DEBUG : true;
         
         error_log("🔧 SVV API Integration initialized - Environment: $environment");
         error_log("🔧 SVV API Base URL: {$this->svv_api_base_url}");
@@ -380,8 +380,10 @@ class SVV_API_Integration {
             return $token;
         }
         
-        // Log the token being used (first 20 chars only for security) if debug mode is enabled
+        // Log the complete token in debug mode
         if ($this->debug_mode) {
+            error_log("🔑 Full token being used: " . $token);
+        } else {
             error_log("🔑 Token being used (first 20 chars): " . substr($token, 0, 20));
         }
         
