@@ -1076,7 +1076,7 @@ class SVV_API_Integration {
      * @param string $url The request URL
      * @return mixed The unmodified response
      */
-    private function log_http_request($response, $context, $transport, $request_args, $url) {
+    public function log_http_request($response, $context, $transport, $request_args, $url) {
         error_log("🌐 HTTP Request:");
         error_log("URL: $url");
         error_log("Context: $context");
