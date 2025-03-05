@@ -8,14 +8,15 @@ class Beepi_Admin {
      * Constructor - add this to the class
      */
     public function __construct() {
-        // Register AJAX handler for token testing
+        // Register AJAX handlers
         add_action('wp_ajax_beepi_test_token', array($this, 'ajax_test_token'));
-        
-        // Register AJAX handler for diagnostics
         add_action('wp_ajax_svv_run_diagnostics', array($this, 'ajax_run_diagnostics'));
 
-        // Register admin scripts and styles
+        // Add admin pages and assets
+        add_action('admin_menu', array($this, 'add_plugin_admin_menu'));
+        add_action('admin_menu', array($this, 'add_svv_diagnostics_page'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_diagnostics_scripts'));
     }
 
     /**
@@ -53,6 +54,36 @@ class Beepi_Admin {
                 'success' => __('Success', 'beepi'),
                 'error' => __('Error', 'beepi'),
                 'unknown' => __('Unknown', 'beepi')
+            )
+        ));
+    }
+
+    /**
+     * Enqueue scripts for diagnostics page
+     */
+    public function enqueue_diagnostics_scripts($hook) {
+        // Check if we're on our diagnostics page
+        if ($hook !== 'beepi_page_svv-api-diagnostics') {
+            return;
+        }
+
+        // Enqueue our diagnostic script
+        wp_enqueue_script(
+            'beepi-svv-diagnostics', 
+            BEEPI_PLUGIN_URL . 'admin/js/svv-diagnostics.js', 
+            array('jquery'), 
+            BEEPI_VERSION, 
+            true
+        );
+
+        // Localize script with nonce and ajax url
+        wp_localize_script('beepi-svv-diagnostics', 'svvDiagnostics', array(
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('beepi_admin_nonce'),
+            'diagnostic_labels' => array(
+                'running' => __('Running diagnostics...', 'beepi'),
+                'success' => __('Diagnostics Completed', 'beepi'),
+                'error' => __('Diagnostics Failed', 'beepi')
             )
         ));
     }
@@ -110,6 +141,39 @@ class Beepi_Admin {
             'dashicons-car',
             85
         );
+    }
+
+    /**
+     * Add SVV API Diagnostics submenu page
+     */
+    public function add_svv_diagnostics_page() {
+        add_submenu_page(
+            'beepi', // Parent slug
+            'SVV API Diagnostics', 
+            'API Diagnostics', 
+            'manage_options', 
+            'svv-api-diagnostics', 
+            array($this, 'render_diagnostics_page')
+        );
+    }
+
+    /**
+     * Render the SVV API Diagnostics page
+     */
+    public function render_diagnostics_page() {
+        ?>
+        <div class="wrap">
+            <h1><?php _e('Statens Vegvesen API Diagnostics', 'beepi'); ?></h1>
+            <p><?php _e('Run a comprehensive diagnostic test of the SVV API integration.', 'beepi'); ?></p>
+            <button id="run-svv-diagnostics" class="button button-primary">
+                <?php _e('Run Diagnostics', 'beepi'); ?>
+            </button>
+            <div id="diagnostic-results" style="margin-top: 20px; display: none;">
+                <h3><?php _e('Diagnostic Results', 'beepi'); ?></h3>
+                <pre class="diagnostic-content"></pre>
+            </div>
+        </div>
+        <?php
     }
 
     /**
