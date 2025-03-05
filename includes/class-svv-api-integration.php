@@ -57,25 +57,16 @@ class SVV_API_Integration {
      */
     public function get_access_token($force_new = false) {
         try {
-            // Check cache unless forcing new token
+            // Check if we have a cached token and not forcing new
             if (!$force_new) {
                 $cached_token = SVV_API_Cache::get($this->token_cache_key);
                 if ($cached_token !== false) {
-                    // Validate cached token before using
-                    $token_details = $this->decode_jwt_token($cached_token);
-                    if (!empty($token_details) && 
-                        !isset($token_details['error']) && 
-                        isset($token_details['exp']) && 
-                        $token_details['exp'] > time() + 30) { // 30 second buffer
-                        error_log("🔑 Using valid cached Maskinporten token");
-                        return $cached_token;
-                    }
-                    error_log("🔑 Cached token invalid or expiring soon, generating new one");
-                    SVV_API_Cache::delete($this->token_cache_key);
+                    error_log("🔑 Using valid cached Maskinporten token");
+                    return $cached_token;
                 }
             }
             
-            error_log("🔑 Requesting new Maskinporten token" . ($force_new ? ' (forced)' : ''));
+            error_log("🔑 Requesting new Maskinporten token");
             
             // Create JWT grant with enhanced error handling
             $jwt = $this->create_jwt_grant();
@@ -91,7 +82,7 @@ class SVV_API_Integration {
                     'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
                     'assertion' => $jwt
                 ],
-                'timeout' => 15,
+                'timeout' => 30,
             ]);
 
             if (is_wp_error($response)) {
@@ -106,77 +97,28 @@ class SVV_API_Integration {
             $status_code = wp_remote_retrieve_response_code($response);
             error_log("🔄 Maskinporten response status: $status_code");
 
-            // Enhanced error handling for various HTTP status codes
-            switch ($status_code) {
-                case 200:
-                    if (!isset($body['access_token'])) {
-                        throw new Exception('No access token in response');
-                    }
-                    break;
-                case 400:
-                    throw new Exception('Bad request: ' . ($body['error_description'] ?? 'Unknown error'));
-                case 401:
-                    throw new Exception('Authentication failed: ' . ($body['error_description'] ?? 'Unauthorized'));
-                case 403:
-                    throw new Exception('Access forbidden: ' . ($body['error_description'] ?? 'Forbidden'));
-                case 429:
-                    throw new Exception('Rate limit exceeded. Try again later.');
-                default:
-                    throw new Exception("Unexpected response (HTTP $status_code): " . ($body['error_description'] ?? 'Unknown error'));
+            // Handle error responses from Maskinporten
+            if ($status_code !== 200) {
+                error_log("🔍 Maskinporten error response: " . wp_remote_retrieve_body($response));
+                throw new Exception("Maskinporten error (HTTP $status_code): " . 
+                    ($body['error_description'] ?? $body['error'] ?? 'Unknown error'));
             }
 
-            // Get token and decode for validation
+            // Check for token in response
+            if (!isset($body['access_token'])) {
+                throw new Exception('No access token in Maskinporten response');
+            }
+
+            // Get token - Do not validate the token from Maskinporten
+            // Maskinporten already validates it, and trying to validate ourselves 
+            // causes issues with certain claims
             $token = $body['access_token'];
-            $token_details = $this->decode_jwt_token($token);
-
-            // Enhanced token validation
-            if (empty($token_details) || isset($token_details['error'])) {
-                throw new Exception('Invalid token format: ' . ($token_details['error'] ?? 'Unknown error'));
-            }
-
-            // Comprehensive token validation
-            $validation_errors = [];
             
-            // Required claims check
-            $required_claims = ['scope', 'exp', 'aud', 'iss', 'iat', 'jti', 'resource'];
-            foreach ($required_claims as $claim) {
-                if (!isset($token_details[$claim])) {
-                    $validation_errors[] = "Missing required claim: $claim";
-                }
-            }
-
-            // Specific claim validations
-            if (empty($validation_errors)) {
-                // Scope validation
-                if ($token_details['scope'] !== $this->scope) {
-                    $validation_errors[] = "Scope mismatch. Expected: {$this->scope}, Got: {$token_details['scope']}";
-                }
-
-                // Expiration validation with grace period
-                if ($token_details['exp'] <= time() + 30) {
-                    $validation_errors[] = "Token is expired or expiring too soon";
-                }
-
-                // Issuer validation
-                if ($token_details['iss'] !== $this->client_id) {
-                    $validation_errors[] = "Invalid issuer. Expected: {$this->client_id}, Got: {$token_details['iss']}";
-                }
-
-                // Resource validation
-                if (!is_array($token_details['resource'])) {
-                    $validation_errors[] = "Invalid resource claim format";
-                }
-            }
-
-            if (!empty($validation_errors)) {
-                throw new Exception('Token validation failed: ' . implode(', ', $validation_errors));
-            }
-
-            // Cache valid token
-            $cache_duration = min($token_details['exp'] - time() - 30, $this->token_cache_expiry);
-            SVV_API_Cache::set($this->token_cache_key, $token, $cache_duration);
+            // Cache the token using the expires_in value from Maskinporten response
+            $expires_in = isset($body['expires_in']) ? (int)$body['expires_in'] - 60 : $this->token_cache_expiry;
+            SVV_API_Cache::set($this->token_cache_key, $token, $expires_in);
             
-            error_log("✅ Successfully obtained and validated Maskinporten token");
+            error_log("✅ Successfully obtained Maskinporten token");
             return $token;
 
         } catch (Exception $e) {
@@ -213,7 +155,7 @@ class SVV_API_Integration {
      */
     private function create_jwt_grant() {
         try {
-            // Validate certificate and get data
+            // Load and verify certificate
             if (!file_exists($this->certificate_path)) {
                 throw new Exception("Certificate file not found at: {$this->certificate_path}");
             }
@@ -223,18 +165,19 @@ class SVV_API_Integration {
                 throw new Exception('Could not read private key from PEM file');
             }
 
-            $cert_data = $this->extract_cert_data($private_key);
+            // Get certificate data
+            $cert_data = $this->extract_cert_data();
             if (is_wp_error($cert_data)) {
                 throw new Exception($cert_data->get_error_message());
             }
 
-            // Create standardized JWT header
+            // Create JWT header with x5c claim
             $header = [
                 'alg' => 'RS256',
                 'x5c' => [$cert_data]
             ];
 
-            // Add optional kid if defined
+            // Add key ID if defined
             if (defined('SVV_API_KID') && SVV_API_KID) {
                 $header['kid'] = SVV_API_KID;
             }
@@ -244,7 +187,7 @@ class SVV_API_Integration {
             $aud = $is_test ? 'https://test.maskinporten.no/' : 'https://maskinporten.no/';
             $resource = $is_test ? 'https://www.utv.vegvesen.no' : 'https://www.vegvesen.no';
 
-            // Create standardized JWT payload
+            // Create JWT payload - Keep only the essential claims
             $now = time();
             $payload = [
                 'aud' => $aud,
@@ -254,14 +197,17 @@ class SVV_API_Integration {
                 'iat' => $now,
                 'jti' => $this->generate_uuid(),
                 'resource' => [$resource],
-                'client_amr' => 'virksomhetssertifikat',
-                'client_org_no' => $this->org_no
+                'client_amr' => 'virksomhetssertifikat'
             ];
 
-            // Base64-url encode header and payload
+            // Only add client_org_no if needed (typically not required)
+            if (defined('INCLUDE_ORG_NO') && INCLUDE_ORG_NO) {
+                $payload['client_org_no'] = $this->org_no;
+            }
+
+            // Encode the JWT
             $encoded_header = $this->base64url_encode(json_encode($header));
             $encoded_payload = $this->base64url_encode(json_encode($payload));
-
             $signing_input = $encoded_header . '.' . $encoded_payload;
 
             // Sign JWT with private key
@@ -269,18 +215,15 @@ class SVV_API_Integration {
             $key_resource = openssl_pkey_get_private($private_key, $this->certificate_password);
             
             if (!$key_resource) {
-                error_log("❌ Could not load private key - Check password");
-                return new WP_Error('cert_load_failed', 'Could not load private key. Check the password.');
+                throw new Exception('Could not load private key. Check the password.');
             }
             
             $is_signed = openssl_sign($signing_input, $signature, $key_resource, OPENSSL_ALGO_SHA256);
-
             if (!$is_signed) {
-                error_log("❌ Failed to sign JWT");
-                return new WP_Error('jwt_signing_failed', 'Failed to sign JWT');
+                throw new Exception('Failed to sign JWT');
             }
 
-            // Encode signature and complete JWT
+            // Complete the JWT
             $encoded_signature = $this->base64url_encode($signature);
             $jwt = $encoded_header . '.' . $encoded_payload . '.' . $encoded_signature;
 
@@ -301,165 +244,46 @@ class SVV_API_Integration {
     /**
      * Extract certificate data from PEM file for use in x5c header
      * 
-     * @param string $private_key PEM formatted private key
      * @return string|WP_Error Base64 encoded certificate data or error
      */
-    private function extract_cert_data($private_key) {
-        // Legg til mer detaljert logging og flere fallback-mekanismer
-        $potential_cert_paths = [
-            dirname($this->certificate_path) . '/certificate.pem',
-            dirname($this->certificate_path) . '/private.pem',
-            $this->certificate_path,
-            dirname($this->certificate_path) . '/cert.pem',
-            dirname($this->certificate_path) . '/public.pem'
-        ];
-
-        error_log("🔍 Searching for certificate in multiple locations...");
+    private function extract_cert_data() {
+        error_log("🔍 Looking for certificate data");
         
-        // Try each potential path
-        foreach ($potential_cert_paths as $path) {
-            error_log("🔍 Checking path: $path");
-            
+        // Define possible certificate locations
+        $cert_file_paths = [
+            dirname($this->certificate_path) . '/certificate.pem',
+            $this->certificate_path,
+            str_replace('private.pem', 'certificate.pem', $this->certificate_path),
+            dirname($this->certificate_path) . '/public.pem',
+            dirname($this->certificate_path) . '/cert.pem',
+        ];
+        
+        // Try each location
+        foreach ($cert_file_paths as $path) {
             if (!file_exists($path)) {
-                error_log("ℹ️ File not found at: $path");
                 continue;
             }
-
+            
             error_log("✅ Found file at: $path");
             $cert_content = file_get_contents($path);
             
-            if ($cert_content === false) {
-                error_log("❌ Could not read file content from: $path");
+            if (empty($cert_content)) {
                 continue;
             }
-
-            // Try to extract certificate data
+            
+            // Try to extract certificate data between BEGIN/END markers
             if (preg_match('/-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----/s', $cert_content, $matches)) {
                 $cert_data = str_replace(["\r", "\n", " "], '', $matches[1]);
-                
-                // Validate the extracted data
-                if (empty($cert_data)) {
-                    error_log("⚠️ Extracted empty certificate data from: $path");
-                    continue;
-                }
-
                 error_log("✅ Successfully extracted certificate data from: $path");
                 return $cert_data;
-            } else {
-                error_log("ℹ️ No certificate block found in: $path");
             }
         }
-
-        // If we reach here, no valid certificate was found
-        error_log("❌ No valid certificate found in any potential location");
-        error_log("📋 Checked paths: " . implode(', ', $potential_cert_paths));
         
-        return new WP_Error(
-            'cert_not_found', 
-            'No valid certificate found in any of the expected locations',
-            ['paths_checked' => $potential_cert_paths]
-        );
+        // If we get here, certificate data wasn't found
+        error_log("❌ No valid certificate data found in any of the expected locations");
+        return new WP_Error('cert_not_found', 'No valid certificate data found');
     }
 
-    /**
-     * Base64-url encoding function
-     * 
-     * @param string $data Data to encode
-     * @return string Base64-url encoded string
-     */
-    private function base64url_encode($data) {
-        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
-    }
-
-    /**
-     * Generate UUID v4
-     * 
-     * @return string UUID
-     */
-    private function generate_uuid() {
-        return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-            mt_rand(0, 0xffff), mt_rand(0, 0xffff),   // First two random 16-bit segments
-            mt_rand(0, 0xffff),                       // Third random 16-bit segment
-            mt_rand(0, 0x0fff) | 0x4000,              // Fourth segment with version 4 bit set
-            mt_rand(0, 0x3fff) | 0x8000,              // Fifth segment with variant bit set
-            mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)  // Last three random segments
-        );
-    }
-    
-    /**
-     * Test Maskinporten token generation without making API calls
-     * 
-     * @return array Test results with status and messages
-     */
-    public function test_token_generation() {
-        $results = [
-            'success' => false,
-            'messages' => [],
-        ];
-        
-        // Step 1: Check certificate
-        if (!file_exists($this->certificate_path)) {
-            $results['messages'][] = [
-                'type' => 'error',
-                'message' => 'Certificate file not found at: ' . $this->certificate_path
-            ];
-            return $results;
-        }
-        
-        $results['messages'][] = [
-            'type' => 'success',
-            'message' => 'Certificate file found'
-        ];
-        
-        // Step 2: Try to load private key
-        $private_key = file_get_contents($this->certificate_path);
-        if (!$private_key) {
-            $results['messages'][] = [
-                'type' => 'error',
-                'message' => 'Could not read private key from certificate file'
-            ];
-            return $results;
-        }
-        
-        $results['messages'][] = [
-            'type' => 'success',
-            'message' => 'Private key loaded from certificate file'
-        ];
-        
-        // Step 3: Try to create JWT
-        $jwt = $this->create_jwt_grant();
-        if (is_wp_error($jwt)) {
-            $results['messages'][] = [
-                'type' => 'error',
-                'message' => 'JWT creation failed: ' . $jwt->get_error_message()
-            ];
-            return $results;
-        }
-        
-        $results['messages'][] = [
-            'type' => 'success',
-            'message' => 'JWT grant created successfully'
-        ];
-        
-        // Step 4: Try to get token
-        $token = $this->get_access_token();
-        if (is_wp_error($token)) {
-            $results['messages'][] = [
-                'type' => 'error',
-                'message' => 'Token request failed: ' . $token->get_error_message()
-            ];
-            return $results;
-        }
-        
-        $results['success'] = true;
-        $results['messages'][] = [
-            'type' => 'success',
-            'message' => 'Successfully obtained access token from Maskinporten'
-        ];
-        
-        return $results;
-    }
-    
     /**
      * Get vehicle data by registration number
      * 
@@ -681,6 +505,139 @@ class SVV_API_Integration {
         
         return $vehicle_data;
     }
+
+    /**
+     * Decode JWT token for debugging
+     * 
+     * @param string $token JWT token
+     * @return array Decoded token payload or error
+     */
+    private function decode_jwt_token($token) {
+        $parts = explode('.', $token);
+        if (count($parts) !== 3) {
+            return ['error' => 'Invalid JWT format'];
+        }
+        
+        try {
+            // Only decode the payload part (index 1)
+            $base64_payload = $parts[1];
+            $base64_url_decoded = strtr($base64_payload, '-_', '+/');
+            $padded = str_pad($base64_url_decoded, strlen($base64_url_decoded) % 4, '=', STR_PAD_RIGHT);
+            $decoded = base64_decode($padded);
+            
+            if ($decoded === false) {
+                return ['error' => 'Invalid base64 encoding'];
+            }
+            
+            $payload = json_decode($decoded, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                return ['error' => 'Invalid JSON in payload: ' . json_last_error_msg()];
+            }
+            
+            return $payload;
+        } catch (Exception $e) {
+            return ['error' => 'Could not decode token: ' . $e->getMessage()];
+        }
+    }
+
+    /**
+     * Base64-url encoding function
+     * 
+     * @param string $data Data to encode
+     * @return string Base64-url encoded string
+     */
+    private function base64url_encode($data) {
+        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+    }
+
+    /**
+     * Generate UUID v4
+     * 
+     * @return string UUID
+     */
+    private function generate_uuid() {
+        return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+            mt_rand(0, 0xffff), mt_rand(0, 0xffff),   // First two random 16-bit segments
+            mt_rand(0, 0xffff),                       // Third random 16-bit segment
+            mt_rand(0, 0x0fff) | 0x4000,              // Fourth segment with version 4 bit set
+            mt_rand(0, 0x3fff) | 0x8000,              // Fifth segment with variant bit set
+            mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)  // Last three random segments
+        );
+    }
+    
+    /**
+     * Test Maskinporten token generation without making API calls
+     * 
+     * @return array Test results with status and messages
+     */
+    public function test_token_generation() {
+        $results = [
+            'success' => false,
+            'messages' => [],
+        ];
+        
+        // Step 1: Check certificate
+        if (!file_exists($this->certificate_path)) {
+            $results['messages'][] = [
+                'type' => 'error',
+                'message' => 'Certificate file not found at: ' . $this->certificate_path
+            ];
+            return $results;
+        }
+        
+        $results['messages'][] = [
+            'type' => 'success',
+            'message' => 'Certificate file found'
+        ];
+        
+        // Step 2: Try to load private key
+        $private_key = file_get_contents($this->certificate_path);
+        if (!$private_key) {
+            $results['messages'][] = [
+                'type' => 'error',
+                'message' => 'Could not read private key from certificate file'
+            ];
+            return $results;
+        }
+        
+        $results['messages'][] = [
+            'type' => 'success',
+            'message' => 'Private key loaded from certificate file'
+        ];
+        
+        // Step 3: Try to create JWT
+        $jwt = $this->create_jwt_grant();
+        if (is_wp_error($jwt)) {
+            $results['messages'][] = [
+                'type' => 'error',
+                'message' => 'JWT creation failed: ' . $jwt->get_error_message()
+            ];
+            return $results;
+        }
+        
+        $results['messages'][] = [
+            'type' => 'success',
+            'message' => 'JWT grant created successfully'
+        ];
+        
+        // Step 4: Try to get token
+        $token = $this->get_access_token();
+        if (is_wp_error($token)) {
+            $results['messages'][] = [
+                'type' => 'error',
+                'message' => 'Token request failed: ' . $token->get_error_message()
+            ];
+            return $results;
+        }
+        
+        $results['success'] = true;
+        $results['messages'][] = [
+            'type' => 'success',
+            'message' => 'Successfully obtained access token from Maskinporten'
+        ];
+        
+        return $results;
+    }
     
     /**
      * Prepare vehicle data for display
@@ -830,26 +787,6 @@ class SVV_API_Integration {
         }
         
         return implode(', ', $address);
-    }
-
-    /**
-     * Decode JWT token for debugging
-     * 
-     * @param string $token JWT token
-     * @return array Decoded token payload or error
-     */
-    private function decode_jwt_token($token) {
-        $parts = explode('.', $token);
-        if (count($parts) !== 3) {
-            return ['error' => 'Invalid JWT format'];
-        }
-        
-        try {
-            $payload = json_decode(base64_decode(str_pad(strtr($parts[1], '-_', '+/'), strlen($parts[1]) % 4, '=', STR_PAD_RIGHT)), true);
-            return $payload;
-        } catch (Exception $e) {
-            return ['error' => 'Could not decode token: ' . $e->getMessage()];
-        }
     }
 
     /**
