@@ -137,6 +137,14 @@ class SVV_API_Integration {
             // causes issues with certain claims
             $token = $body['access_token'];
             
+            // After getting token
+            $token_details = $this->decode_jwt_token($token);
+            error_log("🔑 Token received from Maskinporten:");
+            error_log("🔑 Issuer: " . ($token_details['iss'] ?? 'Not found'));
+            error_log("🔑 Audience: " . ($token_details['aud'] ?? 'Not found'));
+            error_log("🔑 Scope: " . ($token_details['scope'] ?? 'Not found'));
+            error_log("🔑 Consumer ID: " . (isset($token_details['consumer']['ID']) ? $token_details['consumer']['ID'] : 'Not found'));
+            
             // Cache the token using the expires_in value from Maskinporten response
             $expires_in = isset($body['expires_in']) ? (int)$body['expires_in'] - 60 : $this->token_cache_expiry;
             SVV_API_Cache::set($this->token_cache_key, $token, $expires_in);
@@ -360,12 +368,26 @@ class SVV_API_Integration {
         error_log("🔄 Calling SVV API endpoint: $endpoint");
         error_log("🔄 Request body: " . json_encode($request_body));
         
+        // Enhanced request logging
+        $request_headers = [
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+            'Authorization' => 'Bearer ' . substr($token, 0, 20) . '...[truncated]'
+        ];
+        error_log("📤 Full API Request:");
+        error_log("URL: " . $endpoint);
+        error_log("Method: POST");
+        error_log("Headers: " . json_encode($request_headers, JSON_PRETTY_PRINT));
+        error_log("Body: " . json_encode($request_body, JSON_PRETTY_PRINT));
+        
         // Retry logic
         $max_retries = 3;
         $retry_count = 0;
         $response = null;
 
         while ($retry_count < $max_retries) {
+            $start_time = microtime(true);
+            
             $response = wp_remote_post($endpoint, [
                 'headers' => [
                     'Content-Type' => 'application/json',
@@ -377,12 +399,33 @@ class SVV_API_Integration {
                 'sslverify' => true,
             ]);
 
+            $end_time = microtime(true);
+            $response_time = round(($end_time - $start_time) * 1000, 2);
+
             if (!is_wp_error($response)) {
+                // Enhanced response logging
+                $status_code = wp_remote_retrieve_response_code($response);
+                $response_headers = wp_remote_retrieve_headers($response);
+                $response_body = wp_remote_retrieve_body($response);
+                
+                error_log("📥 Full API Response:");
+                error_log("Response Time: {$response_time}ms");
+                error_log("Status Code: $status_code");
+                error_log("Headers: " . json_encode($response_headers, JSON_PRETTY_PRINT));
+                error_log("Raw Body: " . $response_body);
+                
+                // Try to parse and log formatted JSON response
+                $parsed_body = json_decode($response_body, true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    error_log("Parsed Body: " . json_encode($parsed_body, JSON_PRETTY_PRINT));
+                }
+                
                 break;
             }
 
             $retry_count++;
             error_log("🔄 Retry $retry_count/$max_retries for SVV API request");
+            error_log("❌ Error: " . $response->get_error_message());
         }
 
         if (is_wp_error($response)) {
