@@ -45,6 +45,12 @@ class SVV_API_Integration {
         // Get debug mode from wp-config
         $this->debug_mode = defined('SVV_API_DEBUG') ? SVV_API_DEBUG : true;
         
+        // Add HTTP debug logging when debug mode is enabled
+        if ($this->debug_mode) {
+            add_filter('http_api_debug', [$this, 'log_http_request'], 10, 5);
+            error_log("🔍 HTTP request debugging enabled");
+        }
+        
         // Get cache setting from wp-config
         $this->cache_enabled = defined('SVV_API_CACHE_ENABLED') ? SVV_API_CACHE_ENABLED : true;
         SVV_API_Cache::set_cache_enabled($this->cache_enabled);
@@ -439,7 +445,7 @@ class SVV_API_Integration {
             
             // Try with GET endpoint if available
             error_log("🔄 Trying direct endpoint with new token");
-            $direct_endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke' . urlencode($registration_number);
+            $direct_endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/kjennemerke/' . urlencode($registration_number);
             error_log("🔄 Direct endpoint URL: " . $direct_endpoint);
             
             $response = wp_remote_get($direct_endpoint, [
@@ -1012,5 +1018,51 @@ class SVV_API_Integration {
         }
 
         return $results;
+    }
+
+    /**
+     * Log HTTP requests and responses for debugging
+     * 
+     * @param mixed $response The HTTP response
+     * @param string $context The HTTP context
+     * @param string $transport The HTTP transport used
+     * @param array $request_args The HTTP request arguments
+     * @param string $url The request URL
+     * @return mixed The unmodified response
+     */
+    private function log_http_request($response, $context, $transport, $request_args, $url) {
+        error_log("🌐 HTTP Request:");
+        error_log("URL: $url");
+        error_log("Context: $context");
+        error_log("Transport: $transport");
+        
+        // Redact sensitive information from headers
+        $safe_headers = isset($request_args['headers']) ? $request_args['headers'] : [];
+        if (isset($safe_headers['Authorization'])) {
+            $safe_headers['Authorization'] = 'Bearer [REDACTED]';
+        }
+        
+        error_log("Request Headers: " . print_r($safe_headers, true));
+        
+        // Log request body if present, but redact sensitive data
+        if (isset($request_args['body'])) {
+            $body = is_string($request_args['body']) ? json_decode($request_args['body'], true) : $request_args['body'];
+            error_log("Request Body: " . print_r($body, true));
+        }
+        
+        // Log response details
+        if (is_wp_error($response)) {
+            error_log("Response Error: " . $response->get_error_message());
+        } else {
+            $status_code = wp_remote_retrieve_response_code($response);
+            $headers = wp_remote_retrieve_headers($response);
+            $body = wp_remote_retrieve_body($response);
+            
+            error_log("Response Status: $status_code");
+            error_log("Response Headers: " . print_r($headers, true));
+            error_log("Response Body: " . substr($body, 0, 1000) . (strlen($body) > 1000 ? '...[truncated]' : ''));
+        }
+        
+        return $response;
     }
 }
