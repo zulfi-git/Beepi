@@ -11,6 +11,9 @@ class Beepi_Admin {
         // Register AJAX handler for token testing
         add_action('wp_ajax_beepi_test_token', array($this, 'ajax_test_token'));
         
+        // Register AJAX handler for diagnostics
+        add_action('wp_ajax_svv_run_diagnostics', array($this, 'ajax_run_diagnostics'));
+
         // Register admin scripts and styles
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
     }
@@ -44,6 +47,13 @@ class Beepi_Admin {
         // Localize script
         wp_localize_script('beepi-admin', 'beepiAdmin', array(
             'nonce' => wp_create_nonce('beepi_admin_nonce'),
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'diagnostic_labels' => array(
+                'running' => __('Running diagnostics...', 'beepi'),
+                'success' => __('Success', 'beepi'),
+                'error' => __('Error', 'beepi'),
+                'unknown' => __('Unknown', 'beepi')
+            )
         ));
     }
 
@@ -69,6 +79,22 @@ class Beepi_Admin {
                 'messages' => $results['messages']
             ));
         }
+    }
+
+    /**
+     * AJAX handler for running API diagnostics
+     */
+    public function ajax_run_diagnostics() {
+        check_ajax_referer('beepi_admin_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+        
+        $api = new SVV_API_Integration();
+        $diagnostic_report = $api->run_full_diagnostics();
+        
+        wp_send_json_success($diagnostic_report);
     }
 
     /**
@@ -186,6 +212,17 @@ class Beepi_Admin {
             <p><?php _e('Click the button below to test your Maskinporten authentication.', 'beepi'); ?></p>
             <button class="button" id="beepi-test-token"><?php _e('Test Authentication', 'beepi'); ?></button>
             <div id="beepi-test-result" style="margin-top: 10px; padding: 10px; background: #f8f8f8; border: 1px solid #ddd; display: none;"></div>
+            
+            <h2><?php _e('System Diagnostics', 'beepi'); ?></h2>
+            <p><?php _e('Run a comprehensive diagnostic test of the SVV API integration.', 'beepi'); ?></p>
+            <button class="button button-primary" id="beepi-run-diagnostics">
+                <?php _e('Run Diagnostics', 'beepi'); ?>
+            </button>
+            
+            <div id="beepi-diagnostic-results" style="margin-top: 20px; display: none;">
+                <h3><?php _e('Diagnostic Results', 'beepi'); ?></h3>
+                <div class="diagnostic-content"></div>
+            </div>
         </div>
         <?php
     }

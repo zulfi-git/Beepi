@@ -824,4 +824,209 @@ class SVV_API_Integration {
             return ['error' => 'Could not decode token: ' . $e->getMessage()];
         }
     }
+
+    /**
+     * Run comprehensive diagnostics on the API integration
+     * 
+     * @return array Diagnostic results
+     */
+    public function run_full_diagnostics() {
+        error_log("🕵️ Starting Full Diagnostic Scan");
+        
+        $authentication_debug = $this->comprehensive_authentication_debug();
+        $endpoint_diagnosis = $this->diagnose_api_endpoint();
+        
+        $diagnostic_report = [
+            'authentication_debug' => $authentication_debug,
+            'endpoint_diagnosis' => $endpoint_diagnosis,
+            'timestamp' => current_time('mysql'),
+            'environment' => defined('SVV_API_ENVIRONMENT') ? SVV_API_ENVIRONMENT : 'prod'
+        ];
+        
+        error_log("🔍 Full Diagnostic Report:");
+        error_log(print_r($diagnostic_report, true));
+        
+        return $diagnostic_report;
+    }
+
+    /**
+     * Run comprehensive authentication debugging
+     * 
+     * @return array Debug results
+     */
+    private function comprehensive_authentication_debug() {
+        error_log("🔐 Starting Authentication Diagnostics");
+        
+        $results = [
+            'certificate' => [
+                'status' => 'unknown',
+                'details' => []
+            ],
+            'jwt' => [
+                'status' => 'unknown',
+                'details' => []
+            ],
+            'token' => [
+                'status' => 'unknown',
+                'details' => []
+            ]
+        ];
+
+        // Check certificate
+        try {
+            if (!file_exists($this->certificate_path)) {
+                throw new Exception("Certificate file not found");
+            }
+            
+            $cert_info = openssl_x509_parse(file_get_contents($this->certificate_path));
+            if ($cert_info) {
+                $results['certificate'] = [
+                    'status' => 'ok',
+                    'details' => [
+                        'valid_from' => date('Y-m-d H:i:s', $cert_info['validFrom_time_t']),
+                        'valid_to' => date('Y-m-d H:i:s', $cert_info['validTo_time_t']),
+                        'issuer' => $cert_info['issuer']['CN'],
+                        'is_expired' => time() > $cert_info['validTo_time_t']
+                    ]
+                ];
+            }
+        } catch (Exception $e) {
+            $results['certificate'] = [
+                'status' => 'error',
+                'details' => ['error' => $e->getMessage()]
+            ];
+        }
+
+        // Test JWT creation
+        try {
+            $jwt = $this->create_jwt_grant();
+            if (!is_wp_error($jwt)) {
+                $results['jwt'] = [
+                    'status' => 'ok',
+                    'details' => [
+                        'length' => strlen($jwt),
+                        'parts' => count(explode('.', $jwt))
+                    ]
+                ];
+            } else {
+                throw new Exception($jwt->get_error_message());
+            }
+        } catch (Exception $e) {
+            $results['jwt'] = [
+                'status' => 'error',
+                'details' => ['error' => $e->getMessage()]
+            ];
+        }
+
+        // Test token acquisition
+        try {
+            $token = $this->get_access_token();
+            if (!is_wp_error($token)) {
+                $token_details = $this->decode_jwt_token($token);
+                $results['token'] = [
+                    'status' => 'ok',
+                    'details' => [
+                        'expires' => isset($token_details['exp']) ? 
+                            date('Y-m-d H:i:s', $token_details['exp']) : 'unknown',
+                        'scope' => $token_details['scope'] ?? 'unknown',
+                        'cached' => SVV_API_Cache::get($this->token_cache_key) !== false
+                    ]
+                ];
+            } else {
+                throw new Exception($token->get_error_message());
+            }
+        } catch (Exception $e) {
+            $results['token'] = [
+                'status' => 'error',
+                'details' => ['error' => $e->getMessage()]
+            ];
+        }
+
+        return $results;
+    }
+
+    /**
+     * Diagnose API endpoint connectivity and behavior
+     * 
+     * @return array Diagnostic results
+     */
+    private function diagnose_api_endpoint() {
+        error_log("🔌 Starting API Endpoint Diagnostics");
+        
+        $results = [
+            'connectivity' => [
+                'status' => 'unknown',
+                'details' => []
+            ],
+            'response_time' => null,
+            'ssl_info' => [],
+            'headers' => []
+        ];
+
+        try {
+            $start_time = microtime(true);
+            
+            // Test with a known registration number
+            $test_reg = 'TEST123';
+            $endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke';
+            
+            $token = $this->get_access_token();
+            if (is_wp_error($token)) {
+                throw new Exception($token->get_error_message());
+            }
+
+            $response = wp_remote_post($endpoint, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                    'Authorization' => 'Bearer ' . $token
+                ],
+                'body' => json_encode([['kjennemerke' => $test_reg]]),
+                'timeout' => 15,
+                'sslverify' => true
+            ]);
+
+            $end_time = microtime(true);
+            
+            if (is_wp_error($response)) {
+                throw new Exception($response->get_error_message());
+            }
+
+            // Analyze response
+            $status_code = wp_remote_retrieve_response_code($response);
+            $headers = wp_remote_retrieve_headers($response);
+            
+            $results['connectivity'] = [
+                'status' => 'ok',
+                'details' => [
+                    'status_code' => $status_code,
+                    'endpoint' => $endpoint,
+                    'curl_info' => $response['http_response']->get_info() ?? []
+                ]
+            ];
+            
+            $results['response_time'] = round(($end_time - $start_time) * 1000, 2); // in ms
+            $results['headers'] = $headers;
+            
+            // Get SSL information
+            $ssl_info = openssl_x509_parse(
+                openssl_x509_read(
+                    file_get_contents(ABSPATH . WPINC . '/certificates/ca-bundle.crt')
+                )
+            );
+            
+            $results['ssl_info'] = [
+                'certificate_exists' => !empty($ssl_info),
+                'valid_until' => $ssl_info ? date('Y-m-d H:i:s', $ssl_info['validTo_time_t']) : null
+            ];
+
+        } catch (Exception $e) {
+            $results['connectivity'] = [
+                'status' => 'error',
+                'details' => ['error' => $e->getMessage()]
+            ];
+        }
+
+        return $results;
+    }
 }

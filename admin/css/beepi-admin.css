@@ -49,3 +49,53 @@
     text-align: center;
     color: #666;
 }
+
+.diagnostic-section {
+    margin-bottom: 20px;
+    background: #fff;
+    padding: 15px;
+    border: 1px solid #ccd0d4;
+    box-shadow: 0 1px 1px rgba(0,0,0,.04);
+}
+
+.diagnostic-section h4 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.status-success {
+    background: #46b450;
+    color: #fff;
+}
+
+.status-error {
+    background: #dc3232;
+    color: #fff;
+}
+
+.status-unknown {
+    background: #ffb900;
+    color: #fff;
+}
+
+.diagnostic-details {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.diagnostic-details li {
+    margin-bottom: 5px;
+    font-size: 13px;
+}
