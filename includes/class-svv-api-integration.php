@@ -401,40 +401,25 @@ class SVV_API_Integration {
             error_log("🔑 Token being used (first 20 chars): " . substr($token, 0, 20));
         }
         
-        // Call SVV API - try with array of objects format first
-        $endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke';
-        $request_body_1 = [['kjennemerke' => $registration_number]];
+        // Call SVV API with trailing slash
+        $endpoint = rtrim($this->svv_api_base_url, '/') . '/kjoretoyoppslag/bulk/kjennemerke/';
+        $request_body = [['kjennemerke' => $registration_number]];
         
         error_log("🔄 Calling SVV API endpoint: $endpoint");
-        error_log("🔄 Request body (format 1): " . json_encode($request_body_1));
         
-        // Retry logic
-        $max_retries = 3;
-        $retry_count = 0;
-        $response = null;
-
-        while ($retry_count < $max_retries) {
-            $response = wp_remote_post($endpoint, [
-                'headers' => [
-                    'Content-Type' => 'application/json',
-                    'Accept' => 'application/json',
-                    'Authorization' => 'Bearer ' . $token
-                ],
-                'body' => json_encode($request_body_1),
-                'timeout' => 15,
-                'sslverify' => true,
-            ]);
-
-            if (!is_wp_error($response)) {
-                break;
-            }
-
-            $retry_count++;
-            error_log("🔄 Retry $retry_count/$max_retries for SVV API request");
-        }
+        $response = wp_remote_post($endpoint, [
+            'headers' => [
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+                'Authorization' => 'Bearer ' . $token
+            ],
+            'body' => json_encode($request_body),
+            'timeout' => 15,
+            'sslverify' => true,
+        ]);
 
         if (is_wp_error($response)) {
-            error_log("❌ SVV API error after $max_retries retries: " . $response->get_error_message());
+            error_log("❌ SVV API error: " . $response->get_error_message());
             return $response;
         }
         
@@ -443,27 +428,26 @@ class SVV_API_Integration {
         
         if ($status_code !== 200) {
             error_log("❌ API error: HTTP Status $status_code");
-            error_log("Response body: " . substr($response_body, 0, 500));
             return new WP_Error('api_error', "API error: HTTP Status $status_code");
         }
         
-        error_log("🔄 Final API response status: $status_code");
-        error_log("🔄 Response body (first 500 chars): " . substr($response_body, 0, 500));
+        // Try to decode JSON response
+        $body = json_decode($response_body, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log("❌ JSON decode error: " . json_last_error_msg());
+            return new WP_Error('json_decode_error', 'Failed to decode API response');
+        }
         
-        // Process API response with context
-        $context = [
-            'registration' => $registration_number,
-            'endpoint' => $endpoint,
-            'request_time' => microtime(true)
-        ];
-
-        $processed_response = $this->process_api_response(
-            wp_remote_retrieve_body($response),
-            $context
-        );
-
-        if (is_wp_error($processed_response)) {
-            return $processed_response;
+        // Handle API error responses
+        if (isset($body['gjenstaendeKvote'])) {
+            // Log remaining quota
+            error_log("📊 API Quota remaining: " . $body['gjenstaendeKvote']);
+        }
+        
+        if (isset($body['feilmelding'])) {
+            $error_message = $body['feilmelding'];
+            error_log("❌ API error response: $error_message");
+            return new WP_Error('api_error', $error_message);
         }
         
         // Handle empty response
@@ -472,36 +456,8 @@ class SVV_API_Integration {
             return new WP_Error('empty_response', 'No data returned from API');
         }
         
-        // Check for array response with error
-        if (is_array($body) && !empty($body[0]) && isset($body[0]['feilmelding'])) {
-            $error_message = $body[0]['feilmelding'];
-            error_log("❌ Vehicle not found: $error_message");
-            return new WP_Error('not_found', $error_message);
-        }
-        
-        // Check for valid vehicle data
-        $kjoretoydata = null;
-        
-        // Determine the structure of the response
-        if (is_array($body) && !empty($body[0]) && isset($body[0]['kjoretoydata'])) {
-            // Format 1: Array of results with kjoretoydata
-            $kjoretoydata = $body[0]['kjoretoydata'];
-        } elseif (isset($body['kjoretoydata'])) {
-            // Format 2: Direct object with kjoretoydata
-            $kjoretoydata = $body['kjoretoydata'];
-        } elseif (is_array($body)) {
-            // Format 3: Might be direct data
-            $kjoretoydata = $body;
-        }
-        
-        if (empty($kjoretoydata)) {
-            error_log("❌ No vehicle data in response");
-            return new WP_Error('no_vehicle_data', 'No vehicle data found in response');
-        }
-        
         // Process and prepare data for display
-        error_log("✅ Vehicle data received for: $registration_number");
-        $vehicle_data = $this->prepare_vehicle_data($kjoretoydata);
+        $vehicle_data = $this->prepare_vehicle_data($body);
         
         // Cache for 6 hours
         SVV_API_Cache::set($cache_key, $vehicle_data, 6 * HOUR_IN_SECONDS);
@@ -657,85 +613,5 @@ class SVV_API_Integration {
         }
         
         return implode(', ', $address);
-    }
-
-    /**
-     * Process API response and handle edge cases
-     */
-    private function process_api_response($response_body, $context = []) {
-        $body = json_decode($response_body, true);
-        
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            error_log("❌ JSON decode error: " . json_last_error_msg());
-            return new WP_Error('json_decode_error', 'Failed to decode API response');
-        }
-
-        // Log remaining quota if available
-        if (isset($body['gjenstaendeKvote'])) {
-            $remaining = $body['gjenstaendeKvote'];
-            $total = isset($body['kvote']) ? $body['kvote'] : 'unknown';
-            error_log("📊 API Quota - Remaining: $remaining of $total");
-            
-            // Store quota information
-            update_option('svv_api_quota', [
-                'remaining' => $remaining,
-                'total' => $total,
-                'updated' => current_time('mysql')
-            ]);
-
-            // Check if we're running low on quota (less than 10%)
-            if ($total !== 'unknown' && $remaining < ($total * 0.1)) {
-                error_log("⚠️ API quota running low: $remaining remaining of $total");
-                do_action('svv_api_quota_low', $remaining, $total);
-            }
-        }
-
-        // Handle API error responses while preserving quota information
-        if (isset($body['feilmelding'])) {
-            $error_code = isset($body['feilkode']) ? $body['feilkode'] : 'unknown_api_error';
-            $error_message = $body['feilmelding'];
-            
-            // Log detailed error information
-            error_log("❌ API error response: [$error_code] $error_message");
-            error_log("Context: " . json_encode($context));
-            
-            return new WP_Error($error_code, $error_message, [
-                'context' => $context,
-                'response' => $body
-            ]);
-        }
-
-        return $body;
-    }
-
-    /**
-     * Monitor API quota and trigger warnings
-     */
-    private function check_api_quota() {
-        $quota = get_option('svv_api_quota');
-        if (!$quota) {
-            return;
-        }
-
-        $remaining = $quota['remaining'];
-        $total = $quota['total'];
-        $last_updated = strtotime($quota['updated']);
-
-        // Check if quota data is stale (older than 1 hour)
-        if (time() - $last_updated > HOUR_IN_SECONDS) {
-            error_log("⚠️ API quota information is stale. Last updated: {$quota['updated']}");
-            return;
-        }
-
-        // Calculate usage percentage
-        if ($total !== 'unknown') {
-            $usage_percent = (($total - $remaining) / $total) * 100;
-            error_log("📊 API Usage: {$usage_percent}% ($remaining/$total remaining)");
-
-            if ($usage_percent > 90) {
-                error_log("⚠️ Critical: API quota nearly exhausted!");
-                do_action('svv_api_quota_critical', $remaining, $total);
-            }
-        }
     }
 }
