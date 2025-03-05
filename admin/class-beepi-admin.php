@@ -51,75 +51,23 @@ class Beepi_Admin {
      * AJAX handler for testing token authentication
      */
     public function ajax_test_token() {
-        try {
-            // Verify nonce
-            check_ajax_referer('beepi_admin_nonce', 'nonce');
-            
-            // Test authentication
-            $api = new SVV_API_Integration();
-            $results = $api->test_token_generation();
-            
-            $formatted_results = [
-                'success' => $results['success'],
-                'messages' => [],
-                'timestamp' => current_time('mysql')
-            ];
-            
-            // Process each message and add additional debug info
-            foreach ($results['messages'] as $message) {
-                $formatted_message = [
-                    'type' => $message['type'],
-                    'message' => $message['message'],
-                    'timestamp' => current_time('Y-m-d H:i:s')
-                ];
-                
-                // Add raw message data for debugging if available
-                if (isset($message['raw_message'])) {
-                    $formatted_message['raw_message'] = $message['raw_message'];
-                }
-                
-                // Add response code if available
-                if (isset($message['response_code'])) {
-                    $formatted_message['response_code'] = $message['response_code'];
-                }
-                
-                $formatted_results['messages'][] = $formatted_message;
-            }
-            
-            // Add debug information in development mode
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                $formatted_results['debug_info'] = [
-                    'environment' => defined('SVV_API_ENVIRONMENT') ? SVV_API_ENVIRONMENT : 'prod',
-                    'test_id' => uniqid('test_', true),
-                    'php_version' => PHP_VERSION,
-                    'wordpress_version' => get_bloginfo('version')
-                ];
-            }
-            
-            // Send appropriate response based on test results
-            if (!$results['success']) {
-                wp_send_json_error($formatted_results);
-            } else {
-                wp_send_json_success($formatted_results);
-            }
-            
-        } catch (Exception $e) {
-            // Handle any unexpected errors
-            wp_send_json_error([
-                'success' => false,
-                'messages' => [[
-                    'type' => 'error',
-                    'message' => 'Unexpected error during token test',
-                    'raw_message' => $e->getMessage(),
-                    'timestamp' => current_time('Y-m-d H:i:s')
-                ]],
-                'debug_info' => defined('WP_DEBUG') && WP_DEBUG ? [
-                    'error_type' => get_class($e),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                    'trace' => $e->getTraceAsString()
-                ] : null
-            ]);
+        // Verify nonce
+        check_ajax_referer('beepi_admin_nonce', 'nonce');
+        
+        // Test authentication
+        $api = new SVV_API_Integration();
+        $results = $api->test_token_generation();
+        
+        if (!$results['success']) {
+            // Authentication failed
+            wp_send_json_error(array(
+                'messages' => $results['messages']
+            ));
+        } else {
+            // Authentication successful
+            wp_send_json_success(array(
+                'messages' => $results['messages']
+            ));
         }
     }
 
