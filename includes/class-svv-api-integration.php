@@ -219,8 +219,7 @@ class SVV_API_Integration {
                 'exp' => $now + 120,
                 'iat' => $now,
                 'jti' => $this->generate_uuid(),
-                'resource' => [$resource],
-                'client_amr' => 'virksomhetssertifikat'
+                'resource' => $resource  // Changed from array to string
             ];
 
             // Only add client_org_no if needed (typically not required)
@@ -350,12 +349,16 @@ class SVV_API_Integration {
             error_log("🔑 Fresh token being used (first 20 chars): " . substr($token, 0, 20));
         }
         
-        // Call SVV API - try with array of objects format first
+        // Call SVV API with correct format
         $endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke';
-        $request_body_1 = [['kjennemerke' => $registration_number]];
+        $request_body = [
+            [
+                'kjennemerke' => $registration_number
+            ]
+        ];
         
         error_log("🔄 Calling SVV API endpoint: $endpoint");
-        error_log("🔄 Request body (format 1): " . json_encode($request_body_1));
+        error_log("🔄 Request body: " . json_encode($request_body));
         
         // Retry logic
         $max_retries = 3;
@@ -369,7 +372,7 @@ class SVV_API_Integration {
                     'Accept' => 'application/json',
                     'Authorization' => 'Bearer ' . $token
                 ],
-                'body' => json_encode($request_body_1),
+                'body' => json_encode($request_body),
                 'timeout' => 15,
                 'sslverify' => true,
             ]);
