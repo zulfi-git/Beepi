@@ -139,6 +139,12 @@ class SVV_API_Integration {
             
             // After getting token
             $token_details = $this->decode_jwt_token($token);
+            
+            // Validate token
+            if (!$this->validate_token_for_api($token_details)) {
+                throw new Exception('Token validation failed');
+            }
+            
             error_log("🔑 Token received from Maskinporten:");
             error_log("🔑 Issuer: " . ($token_details['iss'] ?? 'Not found'));
             error_log("🔑 Audience: " . ($token_details['aud'] ?? 'Not found'));
@@ -1110,5 +1116,108 @@ class SVV_API_Integration {
         }
         
         return $response;
+    }
+
+    /**
+     * Validate token for API use
+     * 
+     * @param array $token_details Decoded token details
+     * @return bool Whether the token is valid
+     */
+    private function validate_token_for_api($token_details) {
+        $validations = [
+            'audience_check' => $this->validate_audience($token_details),
+            'scope_check' => $this->validate_scope($token_details),
+            'resource_check' => $this->validate_resource($token_details),
+            'expiration_check' => $this->validate_expiration($token_details)
+        ];
+
+        $failed_checks = array_filter($validations, function($result) {
+            return $result !== true;
+        });
+
+        if (!empty($failed_checks)) {
+            error_log("🚨 Token Validation Failures: " . json_encode($failed_checks));
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate token audience
+     */
+    private function validate_audience($token_details) {
+        $expected_audiences = [
+            'test' => 'https://www.utv.vegvesen.no',
+            'prod' => 'https://www.vegvesen.no'
+        ];
+        
+        $current_env = defined('SVV_API_ENVIRONMENT') ? SVV_API_ENVIRONMENT : 'prod';
+        $expected_audience = $expected_audiences[$current_env];
+
+        if (!isset($token_details['aud']) || $token_details['aud'] !== $expected_audience) {
+            error_log("❌ Audience Mismatch");
+            error_log("Expected: $expected_audience");
+            error_log("Actual: " . ($token_details['aud'] ?? 'Not set'));
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Validate token scope
+     */
+    private function validate_scope($token_details) {
+        $expected_scope = 'svv:kjoretoy/kjoretoyopplysninger';
+
+        if (!isset($token_details['scope']) || $token_details['scope'] !== $expected_scope) {
+            error_log("❌ Scope Mismatch");
+            error_log("Expected: $expected_scope");
+            error_log("Actual: " . ($token_details['scope'] ?? 'Not set'));
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Validate token resource
+     */
+    private function validate_resource($token_details) {
+        $expected_resources = [
+            'test' => 'https://www.utv.vegvesen.no',
+            'prod' => 'https://www.vegvesen.no'
+        ];
+        
+        $current_env = defined('SVV_API_ENVIRONMENT') ? SVV_API_ENVIRONMENT : 'prod';
+        $expected_resource = $expected_resources[$current_env];
+
+        if (!isset($token_details['resource']) || $token_details['resource'] !== $expected_resource) {
+            error_log("❌ Resource Mismatch");
+            error_log("Expected: $expected_resource");
+            error_log("Actual: " . ($token_details['resource'] ?? 'Not set'));
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Validate token expiration
+     */
+    private function validate_expiration($token_details) {
+        $current_time = time();
+        
+        if (!isset($token_details['exp'])) {
+            error_log("❌ No Expiration Time in Token");
+            return false;
+        }
+
+        if ($token_details['exp'] <= $current_time) {
+            error_log("❌ Token Expired");
+            error_log("Expiration Time: " . date('Y-m-d H:i:s', $token_details['exp']));
+            return false;
+        }
+
+        return true;
     }
 }
