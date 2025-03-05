@@ -139,10 +139,17 @@ class SVV_API_Integration {
             
             // After getting token
             $token_details = $this->decode_jwt_token($token);
+            
+            // Verify resource claim
+            if (!$this->verify_resource_claim($token_details)) {
+                throw new Exception('Invalid resource claim in token');
+            }
+            
             error_log("🔑 Token received from Maskinporten:");
             error_log("🔑 Issuer: " . ($token_details['iss'] ?? 'Not found'));
             error_log("🔑 Audience: " . ($token_details['aud'] ?? 'Not found'));
             error_log("🔑 Scope: " . ($token_details['scope'] ?? 'Not found'));
+            error_log("🔑 Resource: " . ($token_details['resource'] ?? 'Not found'));
             error_log("🔑 Consumer ID: " . (isset($token_details['consumer']['ID']) ? $token_details['consumer']['ID'] : 'Not found'));
             
             // Cache the token using the expires_in value from Maskinporten response
@@ -1056,15 +1063,20 @@ lode('.', $jwt))
             // Get SSL information
             $ssl_info = openssl_x509_parse(  $results['token'] = [
                 openssl_x509_read(                    'status' => 'ok',
-                    file_get_contents(ABSPATH . WPINC . '/certificates/ca-bundle.crt') [
-                )et($token_details['exp']) ? 
-            );m-d H:i:s', $token_details['exp']) : 'unknown',
-             ?? 'unknown',
-            $results['ssl_info'] = [          'cached' => SVV_API_Cache::get($this->token_cache_key) !== false
-                'certificate_exists' => !empty($ssl_info),           ]
-                'valid_until' => $ssl_info ? date('Y-m-d H:i:s', $ssl_info['validTo_time_t']) : null                ];
+                    file_get_contents(                    'details' => [
+                        ABSPATH . WPINC . '/certificates/ca-bundle.crt')et($token_details['exp']) ? 
+                            date('Y-m-d H:i:s', $token_details['exp']) : 'unknown',
+                        'scope' => $token_details['scope'] ?? 'unknown',
+                        'cached' => SVV_API_Cache::get($this->token_cache_key) !== false
+                    ]log(print_r($diagnostic_report, true));
+                ]
+            );
+            
+            $results['ssl_info'] = [
+                'certificate_exists' => !empty($ssl_info),
+                'valid_until' => $ssl_info ? date('Y-m-d H:i:s', $ssl_info['validTo_time_t']) : null
             ];
-           throw new Exception($token->get_error_message());
+
         } catch (Exception $e) {            }
             $results['connectivity'] = [ } catch (Exception $e) {
                 'status' => 'error',
@@ -1113,13 +1125,24 @@ lode('.', $jwt))
             $headers = wp_remote_retrieve_headers($response);               'Authorization' => 'Bearer ' . $token
             $body = wp_remote_retrieve_body($response);               ],
 
-
-
-
-
-
-
-
+    /**
+     * Verify token's resource claim matches expectations
+     * 
+     * @param array $token_details Decoded token details
+     * @return bool Whether the resource claim is valid
+     */
+    private function verify_resource_claim($token_details) {
+        $is_test = defined('SVV_API_ENVIRONMENT') && SVV_API_ENVIRONMENT === 'test';
+        $expected_resource = $is_test ? 'https://www.utv.vegvesen.no' : 'https://www.vegvesen.no';
+        
+        if (!isset($token_details['resource']) || $token_details['resource'] !== $expected_resource) {
+            error_log("⚠️ Resource claim mismatch");
+            error_log("Expected: " . $expected_resource);
+            error_log("Actual: " . ($token_details['resource'] ?? 'Not set'));
+            return false;
+        }
+        return true;
+    }
 
 }    }        return $response;                }            error_log("Response Body: " . substr($body, 0, 1000) . (strlen($body) > 1000 ? '...[truncated]' : ''));            error_log("Response Headers: " . print_r($headers, true));            error_log("Response Status: $status_code");                            'body' => json_encode([['kjennemerke' => $test_reg]]),
                 'timeout' => 15,
@@ -1216,3 +1239,10 @@ lode('.', $jwt))
      * @param string $transport The HTTP transport used     * @param string $context The HTTP context
      * @param mixed $response The HTTP response     *      * Log HTTP requests and responses for debugging    /**    }        return $results;        }            ];                'details' => ['error' => $e->getMessage()]            $results['connectivity'] = [
                 'status' => 'error',
+                'details' => ['error' => $e->getMessage()]
+            ];
+        }
+
+        return $results;
+    }
+}
