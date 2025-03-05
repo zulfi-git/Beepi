@@ -319,7 +319,7 @@ class SVV_API_Integration {
             return new WP_Error('invalid_reg', 'Invalid registration number format');
         }
         
-        // Check cache first
+        // Check cache first (only for vehicle data, not tokens)
         $cache_key = 'vehicle_data_' . $registration_number;
         $cached_data = SVV_API_Cache::get($cache_key);
         if ($cached_data !== false) {
@@ -327,18 +327,21 @@ class SVV_API_Integration {
             return $cached_data;
         }
         
-        // Get access token
-        $token = $this->get_access_token();
+        // Force new token for each API call
+        error_log("🔑 Forcing new token generation");
+        SVV_API_Cache::delete($this->token_cache_key);
+        $token = $this->get_access_token(true);
+        
         if (is_wp_error($token)) {
-            error_log("❌ Failed to get access token for vehicle lookup");
+            error_log("❌ Failed to get fresh access token for vehicle lookup");
             return $token;
         }
         
         // Log the complete token in debug mode
         if ($this->debug_mode) {
-            error_log("🔑 Full token being used: " . $token);
+            error_log("🔑 Fresh token being used: " . $token);
         } else {
-            error_log("🔑 Token being used (first 20 chars): " . substr($token, 0, 20));
+            error_log("🔑 Fresh token being used (first 20 chars): " . substr($token, 0, 20));
         }
         
         // Call SVV API - try with array of objects format first
