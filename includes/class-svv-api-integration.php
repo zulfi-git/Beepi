@@ -55,10 +55,17 @@ class SVV_API_Integration {
      * @return string|WP_Error Access token or error
      */
     public function get_access_token() {
-        // Check if we have a cached token
+        // Check if token needs refresh (90% of expiry time)
+        $token_info = SVV_API_Cache::get($this->token_cache_key . '_info');
+        $should_refresh = !$token_info || 
+                         ($token_info['created'] + ($this->token_cache_expiry * 0.9)) < time();
+
+        // Return cached token if still valid
         $cached_token = SVV_API_Cache::get($this->token_cache_key);
-        if ($cached_token !== false) {
-            error_log("🔑 Using cached Maskinporten token");
+        if ($cached_token && !$should_refresh) {
+            error_log("🔑 Using cached Maskinporten token (expires in " . 
+                     round(($token_info['created'] + $this->token_cache_expiry - time()) / 60) . 
+                     " minutes)");
             return $cached_token;
         }
         
@@ -104,6 +111,15 @@ class SVV_API_Integration {
         // Cache token
         $token = $body['access_token'];
         SVV_API_Cache::set($this->token_cache_key, $token);
+        
+        // Store token with metadata
+        if ($token) {
+            SVV_API_Cache::set($this->token_cache_key, $token);
+            SVV_API_Cache::set($this->token_cache_key . '_info', [
+                'created' => time(),
+                'expires' => time() + $this->token_cache_expiry
+            ]);
+        }
         
         error_log("✅ Successfully obtained new Maskinporten token");
 
@@ -434,19 +450,20 @@ class SVV_API_Integration {
         error_log("🔄 Final API response status: $status_code");
         error_log("🔄 Response body (first 500 chars): " . substr($response_body, 0, 500));
         
-        // Try to decode JSON response
-        $body = json_decode($response_body, true);
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            error_log("❌ JSON decode error: " . json_last_error_msg());
-            return new WP_Error('json_decode_error', 'Failed to decode API response');
-        }
-        
-        // Handle API error responses
-        if (isset($body['gjenstaendeKvote'])) {
-            // This is the response format for errors
-            $error_message = isset($body['feilmelding']) ? $body['feilmelding'] : 'Unknown API error';
-            error_log("❌ API error response: $error_message");
-            return new WP_Error('api_error', $error_message);
+        // Process API response with context
+        $context = [
+            'registration' => $registration_number,
+            'endpoint' => $endpoint,
+            'request_time' => microtime(true)
+        ];
+
+        $processed_response = $this->process_api_response(
+            wp_remote_retrieve_body($response),
+            $context
+        );
+
+        if (is_wp_error($processed_response)) {
+            return $processed_response;
         }
         
         // Handle empty response
@@ -640,5 +657,85 @@ class SVV_API_Integration {
         }
         
         return implode(', ', $address);
+    }
+
+    /**
+     * Process API response and handle edge cases
+     */
+    private function process_api_response($response_body, $context = []) {
+        $body = json_decode($response_body, true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log("❌ JSON decode error: " . json_last_error_msg());
+            return new WP_Error('json_decode_error', 'Failed to decode API response');
+        }
+
+        // Log remaining quota if available
+        if (isset($body['gjenstaendeKvote'])) {
+            $remaining = $body['gjenstaendeKvote'];
+            $total = isset($body['kvote']) ? $body['kvote'] : 'unknown';
+            error_log("📊 API Quota - Remaining: $remaining of $total");
+            
+            // Store quota information
+            update_option('svv_api_quota', [
+                'remaining' => $remaining,
+                'total' => $total,
+                'updated' => current_time('mysql')
+            ]);
+
+            // Check if we're running low on quota (less than 10%)
+            if ($total !== 'unknown' && $remaining < ($total * 0.1)) {
+                error_log("⚠️ API quota running low: $remaining remaining of $total");
+                do_action('svv_api_quota_low', $remaining, $total);
+            }
+        }
+
+        // Handle API error responses while preserving quota information
+        if (isset($body['feilmelding'])) {
+            $error_code = isset($body['feilkode']) ? $body['feilkode'] : 'unknown_api_error';
+            $error_message = $body['feilmelding'];
+            
+            // Log detailed error information
+            error_log("❌ API error response: [$error_code] $error_message");
+            error_log("Context: " . json_encode($context));
+            
+            return new WP_Error($error_code, $error_message, [
+                'context' => $context,
+                'response' => $body
+            ]);
+        }
+
+        return $body;
+    }
+
+    /**
+     * Monitor API quota and trigger warnings
+     */
+    private function check_api_quota() {
+        $quota = get_option('svv_api_quota');
+        if (!$quota) {
+            return;
+        }
+
+        $remaining = $quota['remaining'];
+        $total = $quota['total'];
+        $last_updated = strtotime($quota['updated']);
+
+        // Check if quota data is stale (older than 1 hour)
+        if (time() - $last_updated > HOUR_IN_SECONDS) {
+            error_log("⚠️ API quota information is stale. Last updated: {$quota['updated']}");
+            return;
+        }
+
+        // Calculate usage percentage
+        if ($total !== 'unknown') {
+            $usage_percent = (($total - $remaining) / $total) * 100;
+            error_log("📊 API Usage: {$usage_percent}% ($remaining/$total remaining)");
+
+            if ($usage_percent > 90) {
+                error_log("⚠️ Critical: API quota nearly exhausted!");
+                do_action('svv_api_quota_critical', $remaining, $total);
+            }
+        }
     }
 }

@@ -4,11 +4,62 @@
 (function($) {
     'use strict';
 
-    // Validation patterns
+    // Enhanced registration patterns with descriptions
     const REGISTRATION_PATTERNS = {
-        NO: /^[A-Z]{2}[0-9]{4,5}$/, // Norwegian format
-        NO_EL: /^E[A-Z][0-9]{4,5}$/, // Norwegian electric vehicles
-        NO_OLD: /^[A-Z]{1,2}[0-9]{4,5}$/ // Older Norwegian format
+        NO_STANDARD: {
+            pattern: /^[A-Z]{2}[0-9]{4,5}$/,
+            description: 'Standard Norwegian format (e.g., AB12345)'
+        },
+        NO_ELECTRIC: {
+            pattern: /^E[A-Z][0-9]{4,5}$/,
+            description: 'Norwegian electric vehicle format (e.g., EK12345)'
+        },
+        NO_HISTORIC: {
+            pattern: /^[A-Z]{1,2}[0-9]{4,5}$/,
+            description: 'Historic Norwegian format (e.g., A12345)'
+        },
+        NO_DIPLOMATIC: {
+            pattern: /^CD[0-9]{4}$/,
+            description: 'Diplomatic vehicle format (e.g., CD1234)'
+        }
+    };
+
+    // Error tracking
+    const errorTracking = {
+        errors: [],
+        maxErrors: 50,
+        
+        add(error) {
+            this.errors.unshift({
+                timestamp: new Date(),
+                error: error,
+                url: window.location.href
+            });
+            
+            // Keep only recent errors
+            if (this.errors.length > this.maxErrors) {
+                this.errors.pop();
+            }
+            
+            // Send to analytics if available
+            if (typeof gtag !== 'undefined') {
+                gtag('event', 'api_error', {
+                    error_type: error.type,
+                    error_message: error.message
+                });
+            }
+        },
+        
+        getRecent() {
+            return this.errors;
+        }
+    };
+
+    // Retry configuration
+    const retryConfig = {
+        maxRetries: 3,
+        retryDelay: 1000,
+        retryableErrors: ['timeout', 'rate_limited', 'network_error']
     };
 
     // When the document is ready
@@ -22,35 +73,60 @@
             const registration = $('#vehicle-registration').val().toUpperCase().replace(/\s+/g, '');
             
             // Enhanced validation
-            if (!validateRegistration(registration)) {
-                showError(resultContainer, 'Invalid registration number format. Please check and try again.');
+            const validationResults = validateRegistration(registration);
+            if (!validationResults.isValid) {
+                const suggestion = validationResults.suggestion ? ` Did you mean ${validationResults.suggestion.corrected} (${validationResults.suggestion.description})?` : '';
+                showError(resultContainer, 'Invalid registration number format. Please check and try again.' + suggestion);
                 highlightField($('#vehicle-registration'));
                 return;
             }
             
             showLoading(resultContainer);
             
-            $.ajax({
-                url: beepi.ajax_url,
-                type: 'POST',
-                data: {
-                    action: 'vehicle_lookup',
-                    nonce: beepi.nonce,
-                    registration: registration,
-                    partner_id: form.find('input[name="partner_id"]').val() || ''
-                },
-                success: function(response) {
-                    handleLookupResponse(response, resultContainer);
-                },
-                error: function(xhr, status, error) {
-                    handleAjaxError(xhr, status, error, resultContainer);
-                }
-            });
+            performLookup(resultContainer);
         });
     });
 
     function validateRegistration(reg) {
-        return Object.values(REGISTRATION_PATTERNS).some(pattern => pattern.test(reg));
+        const results = {
+            isValid: false,
+            matchedFormat: null,
+            suggestion: null
+        };
+
+        // Try all patterns
+        for (const [key, format] of Object.entries(REGISTRATION_PATTERNS)) {
+            if (format.pattern.test(reg)) {
+                results.isValid = true;
+                results.matchedFormat = key;
+                break;
+            }
+        }
+
+        // If invalid, try to suggest corrections
+        if (!results.isValid) {
+            results.suggestion = suggestCorrection(reg);
+        }
+
+        return results;
+    }
+
+    function suggestCorrection(reg) {
+        // Remove common mistakes
+        const cleaned = reg.replace(/[^A-Z0-9]/g, '');
+        
+        // Check if cleaned version matches any pattern
+        for (const [key, format] of Object.entries(REGISTRATION_PATTERNS)) {
+            if (format.pattern.test(cleaned)) {
+                return {
+                    corrected: cleaned,
+                    format: key,
+                    description: format.description
+                };
+            }
+        }
+        
+        return null;
     }
 
     function showLoading(container) {
@@ -62,54 +138,117 @@
         `);
     }
 
-    function showError(container, message, details = '') {
+    function showError(container, message, details = '', isRetryable = false) {
+        const errorId = 'error-' + Date.now();
+        
         container.html(`
-            <div class="beepi-error">
+            <div class="beepi-error" id="${errorId}">
                 <div class="error-icon">⚠️</div>
-                <p class="error-message">${message}</p>
-                ${details ? `<p class="error-details">${details}</p>` : ''}
-                <button class="retry-button" onclick="window.location.reload()">Try Again</button>
+                <div class="error-content">
+                    <p class="error-message">${message}</p>
+                    ${details ? `<p class="error-details">${details}</p>` : ''}
+                    <div class="error-actions">
+                        ${isRetryable ? `
+                            <button class="retry-button" data-error-id="${errorId}">
+                                Try Again
+                            </button>
+                        ` : ''}
+                        <button class="new-search-button">
+                            New Search
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `);
+
+        // Track error
+        errorTracking.add({
+            type: isRetryable ? 'retryable' : 'permanent',
+            message: message,
+            details: details
+        });
+    }
+
+    async function handleLookupResponse(response, container, retryCount = 0) {
+        if (!response || typeof response !== 'object') {
+            return handleResponseError('invalid_response', container, retryCount);
+        }
+
+        if (response.success) {
+            if (response.data.partial_success) {
+                // Handle partial success
+                renderPartialResults(response.data, container);
+            } else if (validateResponseData(response.data)) {
+                renderTeaserResults(response.data, container);
+            } else {
+                return handleResponseError('invalid_data', container, retryCount);
+            }
+        } else {
+            const errorType = response.data?.error_type || 'unknown';
+            return handleResponseError(errorType, container, retryCount);
+        }
+    }
+
+    async function handleResponseError(errorType, container, retryCount) {
+        const isRetryable = retryConfig.retryableErrors.includes(errorType);
+        
+        if (isRetryable && retryCount < retryConfig.maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, retryConfig.retryDelay));
+            return performLookup(container, retryCount + 1);
+        }
+
+        const errorMessage = getErrorMessage(errorType);
+        showError(container, errorMessage.message, errorMessage.details, isRetryable);
+    }
+
+    function renderPartialResults(data, container) {
+        const html = renderTeaserResults(data, container);
+        
+        // Add warning about partial data
+        container.append(`
+            <div class="partial-data-warning">
+                <p>⚠️ Some vehicle information is currently unavailable.</p>
+                <ul class="missing-data-list">
+                    ${data.missing_fields.map(field => `
+                        <li>${formatFieldName(field)}</li>
+                    `).join('')}
+                </ul>
             </div>
         `);
     }
 
-    function handleLookupResponse(response, container) {
-        if (!response || typeof response !== 'object') {
-            showError(container, beepi.error_text, 'Invalid response from server');
-            return;
-        }
-
-        if (response.success && response.data) {
-            if (!validateResponseData(response.data)) {
-                showError(container, 'Incomplete vehicle data received');
-                return;
-            }
-            renderTeaserResults(response.data, container);
-        } else {
-            const message = response.data?.user_message || response.data?.message || beepi.error_text;
-            showError(container, message);
-        }
+    function formatFieldName(field) {
+        const fieldNames = {
+            'engine': 'Engine details',
+            'inspection': 'Inspection history',
+            'registration': 'Registration details'
+            // Add more field mappings as needed
+        };
+        
+        return fieldNames[field] || field;
     }
 
-    function validateResponseData(data) {
-        return data.teaser && data.teaser.reg_number && 
-               (data.teaser.brand || data.teaser.model);
-    }
-
-    function handleAjaxError(xhr, status, error, container) {
-        let errorMessage = 'Could not complete the vehicle lookup';
-        let details = '';
-
-        if (xhr.responseJSON?.data?.user_message) {
-            errorMessage = xhr.responseJSON.data.user_message;
-            details = xhr.responseJSON.data.message || '';
-        } else if (status === 'timeout') {
-            errorMessage = 'Request timed out. Please try again.';
-        } else if (status === 'parsererror') {
-            errorMessage = 'Could not process the response from server.';
-        }
-
-        showError(container, errorMessage, details);
+    function getErrorMessage(errorType) {
+        const errorMessages = {
+            'invalid_response': {
+                message: 'Could not process the server response',
+                details: 'Please try again. If the problem persists, contact support.'
+            },
+            'timeout': {
+                message: 'The request timed out',
+                details: 'The server is taking too long to respond. Please try again.'
+            },
+            'rate_limited': {
+                message: 'Too many requests',
+                details: 'Please wait a moment before trying again.'
+            },
+            // Add more error types as needed
+        };
+        
+        return errorMessages[errorType] || {
+            message: 'An unexpected error occurred',
+            details: 'Please try again later.'
+        };
     }
 
     function highlightField($field) {

@@ -17,44 +17,34 @@ class SVV_API_Response {
         
         // Handle empty responses
         if (empty($api_response)) {
-            return [
-                'success' => false,
-                'error' => 'no_data',
-                'message' => 'No data returned from API',
-                'user_message' => 'Could not find vehicle information. Please check the registration number.',
-                'debug_info' => self::get_debug_info('empty_response')
-            ];
+            return self::format_error(new WP_Error('no_data', 'No data returned from API'));
         }
+
+        // Check rate limits and quotas
+        self::check_rate_limits($api_response);
         
-        // Check for API-specific error responses even with HTTP 200
-        if (isset($api_response['feilmelding']) || isset($api_response['gjenstaendeKvote'])) {
-            $error_code = isset($api_response['feilkode']) ? $api_response['feilkode'] : 'api_error';
-            $error_message = isset($api_response['feilmelding']) ? $api_response['feilmelding'] : 'Unknown API error';
-            return self::format_error(
-                new WP_Error($error_code, $error_message),
-                ['raw_response' => $api_response]
-            );
+        // Check for API-specific error responses
+        if (isset($api_response['feilmelding'])) {
+            return self::handle_api_error_response($api_response);
         }
+
+        // Validate and categorize response data
+        $validation_result = self::validate_response_data($api_response);
         
-        // Validate required vehicle data fields
-        if (!self::validate_vehicle_data($api_response)) {
-            return [
-                'success' => false,
-                'error' => 'invalid_data',
-                'message' => 'Invalid or incomplete vehicle data received',
-                'user_message' => 'The vehicle information appears to be incomplete. Please try again.',
-                'debug_info' => self::get_debug_info('invalid_data', $api_response)
-            ];
-        }
-        
-        // Format successful response
+        // Return appropriate response based on validation
         return [
-            'success' => true,
+            'success' => $validation_result['is_valid'],
             'data' => $api_response,
-            'timestamp' => current_time('mysql')
+            'partial_success' => $validation_result['is_partial'],
+            'missing_fields' => $validation_result['missing_fields'],
+            'timestamp' => current_time('mysql'),
+            'debug_info' => self::get_debug_info('success', [
+                'validation' => $validation_result,
+                'response_meta' => self::extract_response_metadata($api_response)
+            ])
         ];
     }
-    
+
     /**
      * Format error response
      * 
@@ -195,5 +185,147 @@ class SVV_API_Response {
         }
         
         error_log($log_message);
+    }
+
+    /**
+     * Validate and categorize response data
+     */
+    private static function validate_response_data($data) {
+        $required_fields = [
+            'kjoretoyId' => ['kjennemerke'],
+            'godkjenning' => ['tekniskGodkjenning'],
+            'forstegangsregistrering' => ['registrertForstegangNorgeDato']
+        ];
+
+        $optional_fields = [
+            'periodiskKjoretoyKontroll' => ['sistGodkjent', 'kontrollfrist'],
+            'registrering' => ['registrertEier', 'historikk']
+        ];
+
+        $missing_required = [];
+        $missing_optional = [];
+        
+        // Check required fields
+        foreach ($required_fields as $field => $subfields) {
+            if (!isset($data[$field])) {
+                $missing_required[] = $field;
+                continue;
+            }
+            foreach ($subfields as $subfield) {
+                if (!isset($data[$field][$subfield])) {
+                    $missing_required[] = "$field.$subfield";
+                }
+            }
+        }
+
+        // Check optional fields
+        foreach ($optional_fields as $field => $subfields) {
+            if (!isset($data[$field])) {
+                $missing_optional[] = $field;
+                continue;
+            }
+            foreach ($subfields as $subfield) {
+                if (!isset($data[$field][$subfield])) {
+                    $missing_optional[] = "$field.$subfield";
+                }
+            }
+        }
+
+        return [
+            'is_valid' => empty($missing_required),
+            'is_partial' => !empty($missing_optional) && empty($missing_required),
+            'missing_fields' => [
+                'required' => $missing_required,
+                'optional' => $missing_optional
+            ]
+        ];
+    }
+
+    /**
+     * Handle API-specific error responses
+     */
+    private static function handle_api_error_response($response) {
+        $error_code = isset($response['feilkode']) ? $response['feilkode'] : 'unknown_api_error';
+        $error_message = isset($response['feilmelding']) ? $response['feilmelding'] : 'Unknown API error';
+        
+        // Map API-specific error codes
+        $mapped_code = self::map_api_error_code($error_code);
+        
+        return self::format_error(
+            new WP_Error($mapped_code, $error_message),
+            ['raw_response' => $response]
+        );
+    }
+
+    /**
+     * Map API error codes to internal codes
+     */
+    private static function map_api_error_code($code) {
+        $error_map = [
+            'OPPLYSNINGER_UTILGJENGELIG' => 'data_unavailable',
+            'FNR_ETTERNAVN_UKJENT' => 'owner_unknown',
+            'KJENNEMERKE_IKKE_FUNNET' => 'reg_not_found',
+            'KJORETOY_IKKE_REG' => 'vehicle_not_registered',
+            'TEKNISK_FEIL' => 'technical_error',
+            'UGYLDIG_KJENNEMERKE' => 'invalid_registration',
+            'MANGLENDE_TILGANG' => 'access_denied'
+        ];
+
+        return isset($error_map[$code]) ? $error_map[$code] : 'api_error';
+    }
+
+    /**
+     * Check and log rate limits
+     */
+    private static function check_rate_limits($response) {
+        if (isset($response['gjenstaendeKvote'])) {
+            $quota_info = [
+                'remaining' => $response['gjenstaendeKvote'],
+                'total' => isset($response['kvote']) ? $response['kvote'] : null,
+                'timestamp' => current_time('mysql')
+            ];
+
+            // Store quota information
+            update_option('svv_api_rate_limits', $quota_info);
+
+            // Check if we're running low
+            if ($quota_info['total'] && ($quota_info['remaining'] / $quota_info['total']) < 0.1) {
+                do_action('svv_api_quota_low', $quota_info);
+            }
+        }
+    }
+
+    /**
+     * Get enhanced debug information
+     */
+    private static function get_debug_info($type, $context = []) {
+        $debug_info = [
+            'type' => $type,
+            'timestamp' => current_time('mysql'),
+            'request_id' => uniqid('svv_', true),
+            'environment' => defined('SVV_API_ENVIRONMENT') ? SVV_API_ENVIRONMENT : 'prod',
+            'php_version' => PHP_VERSION,
+            'wordpress_version' => get_bloginfo('version'),
+            'quota_info' => get_option('svv_api_rate_limits'),
+            'context' => $context
+        ];
+
+        if (function_exists('wp_get_environment_type')) {
+            $debug_info['wp_environment'] = wp_get_environment_type();
+        }
+
+        return $debug_info;
+    }
+
+    /**
+     * Extract metadata from response
+     */
+    private static function extract_response_metadata($response) {
+        return array_intersect_key($response, array_flip([
+            'gjenstaendeKvote',
+            'kvote',
+            'timestamp',
+            'version'
+        ]));
     }
 }
