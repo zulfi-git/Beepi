@@ -55,17 +55,10 @@ class SVV_API_Integration {
      * @return string|WP_Error Access token or error
      */
     public function get_access_token() {
-        // Check if token needs refresh (90% of expiry time)
-        $token_info = SVV_API_Cache::get($this->token_cache_key . '_info');
-        $should_refresh = !$token_info || 
-                         ($token_info['created'] + ($this->token_cache_expiry * 0.9)) < time();
-
-        // Return cached token if still valid
+        // Check if we have a cached token
         $cached_token = SVV_API_Cache::get($this->token_cache_key);
-        if ($cached_token && !$should_refresh) {
-            error_log("🔑 Using cached Maskinporten token (expires in " . 
-                     round(($token_info['created'] + $this->token_cache_expiry - time()) / 60) . 
-                     " minutes)");
+        if ($cached_token !== false) {
+            error_log("🔑 Using cached Maskinporten token");
             return $cached_token;
         }
         
@@ -111,15 +104,6 @@ class SVV_API_Integration {
         // Cache token
         $token = $body['access_token'];
         SVV_API_Cache::set($this->token_cache_key, $token);
-        
-        // Store token with metadata
-        if ($token) {
-            SVV_API_Cache::set($this->token_cache_key, $token);
-            SVV_API_Cache::set($this->token_cache_key . '_info', [
-                'created' => time(),
-                'expires' => time() + $this->token_cache_expiry
-            ]);
-        }
         
         error_log("✅ Successfully obtained new Maskinporten token");
 
@@ -401,23 +385,96 @@ class SVV_API_Integration {
             error_log("🔑 Token being used (first 20 chars): " . substr($token, 0, 20));
         }
         
-        // Call SVV API
-        $endpoint = rtrim($this->svv_api_base_url, '/') . '/kjoretoyoppslag/bulk/kjennemerke';
-        $request_body = [['kjennemerke' => $registration_number]];
+        // Call SVV API - try with array of objects format first
+        $endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke/';
+        $request_body_1 = [['kjennemerke' => $registration_number]];
         
         error_log("🔄 Calling SVV API endpoint: $endpoint");
+        error_log("🔄 Request body (format 1): " . json_encode($request_body_1));
         
-        $response = wp_remote_post($endpoint, [
-            'headers' => [
-                'Content-Type' => 'application/json',
-                'Accept' => 'application/json',
-                'Authorization' => 'Bearer ' . $token
-            ],
-            'body' => json_encode($request_body),
-            'timeout' => 15,
-            'sslverify' => true,
-        ]);
+        // Retry logic
+        $max_retries = 3;
+        $retry_count = 0;
+        $response = null;
 
+        while ($retry_count < $max_retries) {
+            $response = wp_remote_post($endpoint, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                    'Authorization' => 'Bearer ' . $token
+                ],
+                'body' => json_encode($request_body_1),
+                'timeout' => 15,
+                'sslverify' => true,
+            ]);
+
+            if (!is_wp_error($response)) {
+                break;
+            }
+
+            $retry_count++;
+            error_log("🔄 Retry $retry_count/$max_retries for SVV API request");
+        }
+
+        if (is_wp_error($response)) {
+            error_log("❌ SVV API error after $max_retries retries: " . $response->get_error_message());
+            return $response;
+        }
+        
+        // If we get 401, try alternate request format
+        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 401) {
+            $response_body = wp_remote_retrieve_body($response);
+            error_log("🔄 First request format failed with 401 - Response: " . $response_body);
+            
+            // Try with simple object format
+            $request_body_2 = ['kjennemerke' => $registration_number];
+            error_log("🔄 Trying alternate request format");
+            error_log("🔄 Request body (format 2): " . json_encode($request_body_2));
+            
+            $response = wp_remote_post($endpoint, [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                    'Authorization' => 'Bearer ' . $token
+                ],
+                'body' => json_encode($request_body_2),
+                'timeout' => 15,
+                'sslverify' => true,
+            ]);
+        }
+        
+        // If still getting 401, try a direct endpoint
+        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 401) {
+            $response_body = wp_remote_retrieve_body($response);
+            error_log("🔄 Second request format failed with 401 - Response: " . $response_body);
+            
+            // Clear token cache and get a new token
+            SVV_API_Cache::delete($this->token_cache_key);
+            error_log("🔄 Clearing token cache and getting new token");
+            
+            $token = $this->get_access_token();
+            if (is_wp_error($token)) {
+                return $token;
+            }
+            
+            error_log("🔑 New token obtained (first 20 chars): " . substr($token, 0, 20));
+            
+            // Try with GET endpoint if available
+            error_log("🔄 Trying direct endpoint with new token");
+            $direct_endpoint = $this->svv_api_base_url . '/kjoretoyoppslag/bulk/kjennemerke/' . urlencode($registration_number);
+            error_log("🔄 Direct endpoint URL: " . $direct_endpoint);
+            
+            $response = wp_remote_get($direct_endpoint, [
+                'headers' => [
+                    'Accept' => 'application/json',
+                    'Authorization' => 'Bearer ' . $token
+                ],
+                'timeout' => 15,
+                'sslverify' => true,
+            ]);
+        }
+        
         if (is_wp_error($response)) {
             error_log("❌ SVV API error: " . $response->get_error_message());
             return $response;
@@ -425,6 +482,9 @@ class SVV_API_Integration {
         
         $status_code = wp_remote_retrieve_response_code($response);
         $response_body = wp_remote_retrieve_body($response);
+        
+        error_log("🔄 Final API response status: $status_code");
+        error_log("🔄 Response body (first 500 chars): " . substr($response_body, 0, 500));
         
         if ($status_code !== 200) {
             error_log("❌ API error: HTTP Status $status_code");
@@ -440,12 +500,8 @@ class SVV_API_Integration {
         
         // Handle API error responses
         if (isset($body['gjenstaendeKvote'])) {
-            // Log remaining quota
-            error_log("📊 API Quota remaining: " . $body['gjenstaendeKvote']);
-        }
-        
-        if (isset($body['feilmelding'])) {
-            $error_message = $body['feilmelding'];
+            // This is the response format for errors
+            $error_message = isset($body['feilmelding']) ? $body['feilmelding'] : 'Unknown API error';
             error_log("❌ API error response: $error_message");
             return new WP_Error('api_error', $error_message);
         }
@@ -456,8 +512,36 @@ class SVV_API_Integration {
             return new WP_Error('empty_response', 'No data returned from API');
         }
         
+        // Check for array response with error
+        if (is_array($body) && !empty($body[0]) && isset($body[0]['feilmelding'])) {
+            $error_message = $body[0]['feilmelding'];
+            error_log("❌ Vehicle not found: $error_message");
+            return new WP_Error('not_found', $error_message);
+        }
+        
+        // Check for valid vehicle data
+        $kjoretoydata = null;
+        
+        // Determine the structure of the response
+        if (is_array($body) && !empty($body[0]) && isset($body[0]['kjoretoydata'])) {
+            // Format 1: Array of results with kjoretoydata
+            $kjoretoydata = $body[0]['kjoretoydata'];
+        } elseif (isset($body['kjoretoydata'])) {
+            // Format 2: Direct object with kjoretoydata
+            $kjoretoydata = $body['kjoretoydata'];
+        } elseif (is_array($body)) {
+            // Format 3: Might be direct data
+            $kjoretoydata = $body;
+        }
+        
+        if (empty($kjoretoydata)) {
+            error_log("❌ No vehicle data in response");
+            return new WP_Error('no_vehicle_data', 'No vehicle data found in response');
+        }
+        
         // Process and prepare data for display
-        $vehicle_data = $this->prepare_vehicle_data($body);
+        error_log("✅ Vehicle data received for: $registration_number");
+        $vehicle_data = $this->prepare_vehicle_data($kjoretoydata);
         
         // Cache for 6 hours
         SVV_API_Cache::set($cache_key, $vehicle_data, 6 * HOUR_IN_SECONDS);
