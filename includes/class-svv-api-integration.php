@@ -233,7 +233,7 @@ class SVV_API_Integration {
                 'exp' => $now + 120,
                 'iat' => $now,
                 'jti' => $this->generate_uuid(),
-                'resource' => $resource  // Changed from array to string
+                'resource' => $resource  // Ensure resource claim is correctly set
             ];
 
             // Only add client_org_no if needed (typically not required)
